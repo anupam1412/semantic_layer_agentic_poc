@@ -1,0 +1,267 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# RETAIL ORG HIERARCHY — Layer 2
+# ═══════════════════════════════════════════════════════════════════════════
+
+regions:
+  - name: "London"
+    country: "GB"
+    head: "Emma Clarke"
+    store_count: 3
+  
+  - name: "South East"
+    country: "GB"
+    head: "Sarah Wilson"
+    store_count: 3
+  
+  - name: "Midlands"
+    country: "GB"
+    head: "Robert Brown"
+    store_count: 3
+  
+  - name: "North West"
+    country: "GB"
+    head: "Michael Taylor"
+    store_count: 3
+  
+  - name: "Scotland"
+    country: "GB"
+    head: "Fiona Campbell"
+    store_count: 3
+  
+  - name: "Wales"
+    country: "GB"
+    head: "Owen Davies"
+    store_count: 3
+
+stores:
+  # London
+  - store_id: "STORE-001"
+    name: "London Flagship"
+    region: "London"
+    type: "flagship"
+    capacity: 15000
+    opened: "2018-03-01"
+    manager_name: "Alice Johnson"
+    manager_since: "2020-01-15"
+    manager_experience: 8
+  
+  - store_id: "STORE-002"
+    name: "London Standard"
+    region: "London"
+    type: "standard"
+    capacity: 8000
+    opened: "2019-06-01"
+    manager_name: "Tom Richards"
+    manager_since: "2021-03-01"
+    manager_experience: 6
+  
+  - store_id: "STORE-003"
+    name: "London Outlet"
+    region: "London"
+    type: "outlet"
+    capacity: 5000
+    opened: "2020-01-01"
+    manager_name: "Sophie Green"
+    manager_since: "2022-06-01"
+    manager_experience: 4
+
+  # South East
+  - store_id: "STORE-004"
+    name: "Brighton Outlet"
+    region: "South East"
+    type: "outlet"
+    capacity: 5000
+    opened: "2021-03-15"
+    manager_name: "James Thompson"
+    manager_since: "2025-09-01"
+    manager_experience: 2
+  
+  - store_id: "STORE-005"
+    name: "Brighton Standard"
+    region: "South East"
+    type: "standard"
+    capacity: 8000
+    opened: "2019-09-01"
+    manager_name: "Laura Mitchell"
+    manager_since: "2019-09-01"
+    manager_experience: 10
+  
+  - store_id: "STORE-006"
+    name: "Guildford Standard"
+    region: "South East"
+    type: "standard"
+    capacity: 6000
+    opened: "2020-06-01"
+    manager_name: "Mark Stevens"
+    manager_since: "2020-06-01"
+    manager_experience: 7
+
+  # Midlands
+  - store_id: "STORE-007"
+    name: "Birmingham Standard"
+    region: "Midlands"
+    type: "standard"
+    capacity: 8000
+    opened: "2019-01-15"
+    manager_name: "Karen White"
+    manager_since: "2025-07-01"
+    manager_experience: 1
+  
+  - store_id: "STORE-008"
+    name: "Birmingham Flagship"
+    region: "Midlands"
+    type: "flagship"
+    capacity: 12000
+    opened: "2018-06-01"
+    manager_name: "Daniel Harris"
+    manager_since: "2018-06-01"
+    manager_experience: 12
+  
+  - store_id: "STORE-009"
+    name: "Coventry Outlet"
+    region: "Midlands"
+    type: "outlet"
+    capacity: 4000
+    opened: "2021-01-01"
+    manager_name: "Rachel Adams"
+    manager_since: "2021-01-01"
+    manager_experience: 5
+
+  # North West
+  - store_id: "STORE-010"
+    name: "Manchester Flagship"
+    region: "North West"
+    type: "flagship"
+    capacity: 14000
+    opened: "2018-01-01"
+    manager_name: "Peter Morgan"
+    manager_since: "2018-01-01"
+    manager_experience: 15
+  
+  - store_id: "STORE-011"
+    name: "Manchester Standard"
+    region: "North West"
+    type: "standard"
+    capacity: 7000
+    opened: "2019-11-01"
+    manager_name: "Claire Bennett"
+    manager_since: "2019-11-01"
+    manager_experience: 8
+  
+  - store_id: "STORE-012"
+    name: "Liverpool Outlet"
+    region: "North West"
+    type: "outlet"
+    capacity: 5000
+    opened: "2020-09-01"
+    manager_name: "Andrew Scott"
+    manager_since: "2020-09-01"
+    manager_experience: 6
+
+  # Scotland
+  - store_id: "STORE-013"
+    name: "Edinburgh Flagship"
+    region: "Scotland"
+    type: "flagship"
+    capacity: 10000
+    opened: "2019-03-01"
+    manager_name: "Fiona Campbell"
+    manager_since: "2019-03-01"
+    manager_experience: 9
+  
+  - store_id: "STORE-014"
+    name: "Edinburgh Standard"
+    region: "Scotland"
+    type: "standard"
+    capacity: 6000
+    opened: "2020-06-01"
+    manager_name: "Ian MacLeod"
+    manager_since: "2020-06-01"
+    manager_experience: 7
+  
+  - store_id: "STORE-015"
+    name: "Glasgow Outlet"
+    region: "Scotland"
+    type: "outlet"
+    capacity: 4500
+    opened: "2021-06-01"
+    manager_name: "Morag Stewart"
+    manager_since: "2021-06-01"
+    manager_experience: 4
+
+  # Wales
+  - store_id: "STORE-016"
+    name: "Cardiff Flagship"
+    region: "Wales"
+    type: "flagship"
+    capacity: 9000
+    opened: "2019-09-01"
+    manager_name: "Owen Davies"
+    manager_since: "2019-09-01"
+    manager_experience: 8
+  
+  - store_id: "STORE-017"
+    name: "Cardiff Standard"
+    region: "Wales"
+    type: "standard"
+    capacity: 5500
+    opened: "2020-03-01"
+    manager_name: "Rhian Evans"
+    manager_since: "2020-03-01"
+    manager_experience: 6
+  
+  - store_id: "STORE-018"
+    name: "Swansea Outlet"
+    region: "Wales"
+    type: "outlet"
+    capacity: 3500
+    opened: "2021-09-01"
+    manager_name: "Gareth Williams"
+    manager_since: "2021-09-01"
+    manager_experience: 3
+
+  # Online
+  - store_id: "STORE-ONL-LON"
+    name: "Online London"
+    region: "London"
+    type: "online"
+    capacity: 0
+    opened: "2020-01-01"
+    manager_name: "Digital Team"
+    manager_since: "2020-01-01"
+    manager_experience: 10
+  
+  - store_id: "STORE-ONL-NAT"
+    name: "Online National"
+    region: "London"
+    type: "online"
+    capacity: 0
+    opened: "2020-01-01"
+    manager_name: "Digital Team"
+    manager_since: "2020-01-01"
+    manager_experience: 10
+
+territories:
+  - name: "Greater London"
+    region: "London"
+    annual_target: 5000000
+  
+  - name: "South Coast"
+    region: "South East"
+    annual_target: 2500000
+  
+  - name: "Central England"
+    region: "Midlands"
+    annual_target: 3000000
+  
+  - name: "North England"
+    region: "North West"
+    annual_target: 3500000
+  
+  - name: "Scotland"
+    region: "Scotland"
+    annual_target: 2000000
+  
+  - name: "Wales"
+    region: "Wales"
+    annual_target: 1500000

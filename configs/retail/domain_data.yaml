@@ -1,0 +1,297 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# RETAIL DOMAIN DATA — All 10 Layers
+# ═══════════════════════════════════════════════════════════════════════════
+# This file contains the actual EVENT DATA for domain layers 5-10.
+# The SCHEMA is in ontology.yaml and domain_layers.yaml.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LAYER 6: Supply Chain
+# ─────────────────────────────────────────────────────────────────────────────
+suppliers:
+  - name: "Shenzhen Tech Co"
+    location: "Shenzhen, China"
+    lead_time_weeks: 4
+    supplies_brands: ["TechPro", "SwiftGear"]
+  
+  - name: "Taiwan Electronics"
+    location: "Taipei, Taiwan"
+    lead_time_weeks: 6
+    supplies_brands: ["TechPro"]
+  
+  - name: "Korea Components"
+    location: "Seoul, South Korea"
+    lead_time_weeks: 3
+    supplies_brands: ["ValueLine"]
+  
+  - name: "UK Accessories Ltd"
+    location: "Birmingham, UK"
+    lead_time_weeks: 1
+    supplies_brands: ["SwiftGear", "EcoSmart"]
+
+supply_incidents:
+  - supplier: "Shenzhen Tech Co"
+    incident_type: "factory_fire"
+    date: "2025-02-10"
+    description: "Complete production halt for 4 weeks. Affected TechPro Laptops, Smartphones, Tablets."
+    duration_weeks: 4
+  
+  - supplier: "Shenzhen Tech Co"
+    incident_type: "logistics_delay"
+    date: "2025-03-15"
+    description: "Post-fire backlog causing 2-week additional shipping delays."
+    duration_weeks: 2
+  
+  - supplier: "UK Accessories Ltd"
+    incident_type: "material_change"
+    date: "2025-04-01"
+    description: "Changed USB-C cable material supplier. Old SKU PROD-0045 discontinued, replacement PROD-0089."
+    duration_weeks: 0
+  
+  - supplier: "TechPro Manufacturing"
+    incident_type: "factory_fire"
+    date: "2025-01-15"
+    impact: "60% capacity reduction for Electronics"
+    duration_weeks: 8
+    triggers_concept: "supply chain disruption"  # ← This creates TRIGGERS edge
+
+competitor_actions:
+  - competitor: "RetailMax"
+    action_type: "campaign_launch"
+    date: "2024-11-20"
+    location: "nationwide"
+    impact: "Early Black Friday campaign"
+    triggers_concept: "competitive pressure"  # ← This creates TRIGGERS edge
+
+  - competitor: "TechMart"
+    action_type: "store_opening"
+    date: "2025-02-01"
+    location: "Birmingham"
+    impact: "New flagship store near our location"
+    triggers_concept: "competitive pressure"
+
+alternate_suppliers:
+  - primary: "Shenzhen Tech Co"
+    alternate: "Taiwan Electronics"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LAYER 7: Customer Relationships
+# ─────────────────────────────────────────────────────────────────────────────
+account_managers:
+  - name: "David Lee"
+    segment: "enterprise"
+    left_date: "2025-03-15"
+    accounts: 12
+  
+  - name: "Sarah Chen"
+    segment: "enterprise"
+    accounts: 8
+  
+  - name: "Mike Johnson"
+    segment: "mid-market"
+    accounts: 25
+  
+  - name: "Lisa Park"
+    segment: "smb"
+    accounts: 50
+
+contracts:
+  - segment: "enterprise"
+    type: "SLA"
+    tier: "gold"
+    expiry: "2025-09-30"
+  
+  - segment: "enterprise"
+    type: "SLA"
+    tier: "platinum"
+    expiry: "2025-12-31"
+  
+  - segment: "mid-market"
+    type: "standard"
+    tier: "silver"
+    expiry: "2026-03-31"
+
+churn_risks:
+  - segment: "enterprise"
+    risk_score: 0.82
+    reason: "Account manager David Lee departed Mar 2025; 12 accounts unassigned for 6 weeks"
+  
+  - segment: "enterprise"
+    risk_score: 0.65
+    reason: "3 gold SLA contracts up for renewal in Q3 without dedicated manager"
+  
+  - segment: "smb"
+    risk_score: 0.25
+    reason: "Low risk — price-sensitive but no relationship dependency"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LAYER 8: Temporal Context
+# ─────────────────────────────────────────────────────────────────────────────
+competitor_actions:
+  - competitor: "RetailMax"
+    action_type: "early_black_friday"
+    date: "2025-11-25"
+    description: "National"
+    impact: "40% discount starting 2 days before our Black Friday campaign"
+    region: "London"
+  
+  - competitor: "RetailMax"
+    action_type: "early_black_friday"
+    date: "2025-11-25"
+    description: "National TV + social"
+    impact: "Aggressive TV + social media ad spend"
+    region: "North West"
+  
+  - competitor: "RetailCo"
+    action_type: "store_opening"
+    date: "2025-08-01"
+    description: "Birmingham city centre, 200m from Birmingham Standard"
+    impact: "Diverted 25-30% of foot traffic"
+    region: "Midlands"
+  
+  - competitor: "BrandX"
+    action_type: "viral_product_review"
+    date: "2025-05-15"
+    description: "TikTok viral review of BrandX USB-C cable, 2M views"
+    impact: "Customers switching from our Accessories cables to BrandX via Amazon"
+    region: null
+
+market_conditions:
+  - name: "university_expansion"
+    description: "University of Manchester new campus opened nearby, adding 5000 students"
+    date: "2025-09-01"
+    severity: "positive"
+  
+  - name: "consumer_confidence"
+    description: "Declining since Q2 2025 due to interest rate concerns"
+    date: "2025-04-01"
+    severity: "moderate"
+  
+  - name: "inflation"
+    description: "CPI at 3.2%, affecting discretionary spending"
+    date: "2025-01-01"
+    severity: "moderate"
+
+policy_changes:
+  - name: "parking_fee_increase"
+    description: "Birmingham council raised parking fees from 2/hr to 4/hr"
+    date: "2025-06-01"
+    location: "Birmingham"
+    impact: "Reduced casual shopper visits by ~15%"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LAYER 9: Business Rules
+# ─────────────────────────────────────────────────────────────────────────────
+discount_policies:
+  - category: "Electronics"
+    max_pct: 25
+    approved_by: "VP Sales"
+  
+  - category: "Software"
+    max_pct: 30
+    approved_by: "VP Sales"
+  
+  - category: "Services"
+    max_pct: 15
+    approved_by: "VP Services"
+  
+  - category: "Accessories"
+    max_pct: 40
+    store_type: "outlet"
+    approved_by: "Merchandising"
+
+pricing_decisions:
+  - category: "Analytics"
+    action: "-20% price reduction on Analytics subcategory"
+    reason: "Match new VC-funded competitor NewCo"
+    date: "2025-03-01"
+    scope: "new_customers_only"
+  
+  - category: "Analytics"
+    action: "Extended free trial from 14 to 30 days"
+    reason: "Competitive response — reduce barrier to trial"
+    date: "2025-04-01"
+    scope: "all"
+  
+  - category: "Electronics"
+    action: "Black Friday 30% + simultaneous clearance 20% on same category"
+    reason: "Unintended overlap — clearance scheduled before BF dates confirmed"
+    date: "2025-11-20"
+    scope: "all_channels"
+
+segment_rules:
+  - segment: "enterprise"
+    metric: "annual_spend"
+    condition: ">= 50000"
+    description: "Enterprise: annual spend >= 50K, dedicated account manager"
+  
+  - segment: "mid-market"
+    metric: "annual_spend"
+    condition: ">= 10000"
+    description: "Mid-market: annual spend 10K-50K, shared account manager"
+  
+  - segment: "smb"
+    metric: "annual_spend"
+    condition: "< 10000"
+    description: "SMB: annual spend < 10K, self-service, price-sensitive"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LAYER 10: Loyalty Program
+# ─────────────────────────────────────────────────────────────────────────────
+loyalty_tiers:
+  - name: "bronze"
+    min_annual_spend: 0
+    points_multiplier: 1.0
+  
+  - name: "silver"
+    min_annual_spend: 2000
+    points_multiplier: 1.5
+  
+  - name: "gold"
+    min_annual_spend: 5000
+    points_multiplier: 2.0
+  
+  - name: "platinum"
+    min_annual_spend: 10000
+    points_multiplier: 3.0
+
+redemption_rules:
+  - tier: "gold"
+    points_per_gbp: 80
+    effective_date: "2025-07-01"
+    previous_ratio: "100 points = £1"
+  
+  - tier: "platinum"
+    points_per_gbp: 70
+    effective_date: "2025-08-15"
+    previous_ratio: "80 points = £1"
+  
+  - tier: "gold"
+    points_per_gbp: 75
+    effective_date: "2025-09-01"
+    previous_ratio: "80 points = £1"
+
+loyalty_campaigns:
+  - name: "Summer Double Points"
+    campaign_type: "multiplier"
+    start_date: "2025-06-01"
+    end_date: "2025-08-31"
+    target_tiers: ["gold", "platinum"]
+    points_multiplier: 2.0
+    description: "2x points for premium tiers during summer"
+  
+  - name: "Welcome Bonus"
+    campaign_type: "bonus"
+    start_date: "2025-01-01"
+    end_date: "2025-12-31"
+    target_tiers: ["bronze"]
+    points_multiplier: null
+    description: "500 bonus points on first purchase for new members"
+  
+  - name: "Black Friday Accelerator"
+    campaign_type: "multiplier"
+    start_date: "2025-11-27"
+    end_date: "2025-11-30"
+    target_tiers: ["silver", "gold", "platinum"]
+    points_multiplier: 3.0
+    description: "3x points during Black Friday weekend"

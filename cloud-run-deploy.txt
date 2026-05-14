@@ -1,0 +1,186 @@
+# ═══════════════════════════════════════════════════════
+# DEPLOYMENT GUIDE — ADK Multi-Agent Semantic Layer
+# ═══════════════════════════════════════════════════════
+#
+# Project structure (ADK-compliant):
+#
+#   semantic-layer-poc/                ← parent dir (run adk web from here)
+#   └── semantic_layer_agent/          ← ADK agent package
+#       ├── __init__.py                ← exports root_agent
+#       ├── agent.py                   ← 6 ADK agents + tools
+#       ├── knowledge_graph.py         ← Neo4j (10 domain layers)
+#       ├── vector_search.py           ← Vertex AI Vector Search (4 indexes)
+#       ├── bq_executor.py             ← BigQuery validator + executor
+#       ├── .env                       ← configuration
+#       ├── create_mock_data.py        ← BigQuery tables + scenario data
+#       └── semantic_layer_setup.py    ← Neo4j population + Vertex AI indexing
+
+
+# ─── SECTION 1: Prerequisites ───
+
+gcloud auth application-default login
+gcloud config set project acn-uki-ds-data-ai-project
+gcloud config set compute/region europe-west2
+
+gcloud services enable `
+    aiplatform.googleapis.com `
+    bigquery.googleapis.com `
+    storage.googleapis.com `
+    run.googleapis.com `
+    artifactregistry.googleapis.com
+
+# GCS bucket for vector staging
+gsutil mb -l europe-west2 gs://acn-uki-ds-data-ai-project-semantic-vectors
+
+
+# ─── SECTION 2: Install dependencies ───
+
+cd "C:\Users\anupam.jha\OneDrive - Accenture\Documents\GitHub\semantic-layer-poc"
+pip install -r semantic_layer_agent\requirements.txt
+
+
+# ─── SECTION 3: Start Neo4j (Docker) ───
+
+docker run -d --name neo4j `
+    -p 7474:7474 -p 7687:7687 `
+    -e NEO4J_AUTH=neo4j/semantic-layer-password `
+    neo4j:5.15-community
+
+# Wait 30 seconds, then verify:
+docker ps
+# Browser: http://localhost:7474 (neo4j / semantic-layer-password)
+
+
+# ─── SECTION 4: Create BigQuery mock data (8 tables) ───
+
+cd semantic_layer_agent
+python create_mock_data.py
+
+# Expected:
+#   Dataset ready
+#   8 tables created
+#   25000 orders, ~50000 items, 50000 web events
+#   Scenario pattern checks (Q1-Q7)
+
+
+# ─── SECTION 5: Provision Vertex AI Vector Search (4 indexes) ───
+# Only needed once. Takes 15-30 minutes.
+# Uncomment the provision line in semantic_layer_setup.py and run:
+
+# python -c "
+# from vector_search import VectorSearch
+# from google.cloud import aiplatform
+# aiplatform.init(project='acn-uki-ds-data-ai-project', location='europe-west2')
+# # ... provision code here (see VectorSearchSetup in previous artifacts)
+# "
+
+# After provisioning, update .env with the 4 index IDs + endpoint ID.
+
+
+# ─── SECTION 6: Populate Neo4j (10 domain layers) + index Vertex AI ───
+
+python semantic_layer_setup.py
+
+# Expected:
+#   Layer 1: 8 tables, 7 relationships, 7 FKs
+#   Layer 2: 6 regions, 20 stores, 6 territories
+#   Layer 3: 14 KPIs, 8 driver edges
+#   Layer 4: 11 concepts, 15 AFFECTS edges
+#   Layer 5: 4 categories, brands, taxonomy
+#   Layer 6: 4 suppliers, 3 incidents
+#   Layer 7: 4 account managers, 3 contracts, 3 churn risks
+#   Layer 8: 4 competitor actions, 3 market conditions, 1 policy change
+#   Layer 9: 4 discount policies, 3 pricing decisions, 3 segment rules
+#   Layer 10: 4 tiers, 2 redemption rules, 1 partner, 2 campaigns
+#   Vertex AI: indexed tables, KPIs, concepts, examples
+
+
+# ─── SECTION 7: Run with ADK Web UI (development) ───
+
+# Go back to parent directory
+cd ..
+
+# Launch ADK web (discovers semantic_layer_agent/agent.py → root_agent)
+adk web
+
+# Open http://localhost:8000
+# Select "OrchestratorAgent" from the dropdown
+# Test queries:
+#   "Why are we seeing stockouts in Electronics this month?"
+#   "Why is our enterprise segment churning faster than SMB?"
+#   "Why did the Black Friday promotion underperform compared to last year?"
+#   "Why is Manchester Flagship growing while Birmingham Standard is declining?"
+#   "Why are Accessories sales declining despite strong promotions?"
+#   "Why did our loyalty redemption rate spike in Q3?"
+#   "Why is our margin declining in Software despite growing revenue?"
+
+
+# ─── SECTION 8: Run with ADK CLI (alternative) ───
+
+adk run semantic_layer_agent
+
+
+# ─── SECTION 9: Deploy to Cloud Run (production) ───
+
+# Create Artifact Registry
+gcloud artifacts repositories create semantic-layer `
+    --repository-format=docker `
+    --location=europe-west2
+
+gcloud auth configure-docker europe-west2-docker.pkg.dev
+
+# Build and push
+docker build -t europe-west2-docker.pkg.dev/acn-uki-ds-data-ai-project/semantic-layer/api:latest .
+docker push europe-west2-docker.pkg.dev/acn-uki-ds-data-ai-project/semantic-layer/api:latest
+
+# Deploy
+gcloud run deploy agentic-semantic-layer `
+    --image=europe-west2-docker.pkg.dev/acn-uki-ds-data-ai-project/semantic-layer/api:latest `
+    --region=europe-west2 `
+    --platform=managed `
+    --no-allow-unauthenticated `
+    --set-env-vars="GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_PROJECT=acn-uki-ds-data-ai-project,GOOGLE_CLOUD_LOCATION=europe-west2,GCP_PROJECT=acn-uki-ds-data-ai-project,GCP_REGION=europe-west2,BQ_PROJECT=acn-uki-ds-data-ai-project,BQ_DATASET=customer_sales_data_ai_agentic_semantic_layer,NEO4J_URI=bolt://YOUR_NEO4J_HOST:7687,NEO4J_USER=neo4j,NEO4J_PASSWORD=your-password,VS_INDEX_ENDPOINT_ID=YOUR_ENDPOINT_ID,VS_TABLES_INDEX_ID=YOUR_ID,VS_KPIS_INDEX_ID=YOUR_ID,VS_CONCEPTS_INDEX_ID=YOUR_ID,VS_EXAMPLES_INDEX_ID=YOUR_ID,EMBEDDING_MODEL=text-embedding-005,GENERATIVE_MODEL=gemini-2.5-flash" `
+    --memory=2Gi `
+    --cpu=2 `
+    --min-instances=1 `
+    --max-instances=10 `
+    --timeout=300
+
+
+# ─── SECTION 10: Test deployed API ───
+
+$URL = gcloud run services describe agentic-semantic-layer `
+    --region=europe-west2 --format="value(status.url)"
+$TOKEN = gcloud auth print-identity-token
+
+# Health check
+Invoke-RestMethod -Uri "$URL/health" `
+    -Headers @{ Authorization = "Bearer $TOKEN" }
+
+# Test diagnostic query
+Invoke-RestMethod -Uri "$URL/query" `
+    -Method POST -ContentType "application/json" `
+    -Headers @{ Authorization = "Bearer $TOKEN" } `
+    -Body '{"question": "Why are we seeing stockouts in Electronics this month?"}'
+
+
+# ─── SECTION 11: Verify Neo4j data (optional) ───
+# Open http://localhost:7474 and run these Cypher queries:
+
+# Count all nodes by type:
+# MATCH (n) RETURN labels(n)[0] AS label, count(n) AS count ORDER BY count DESC
+
+# View causal graph:
+# MATCH (a:BusinessConcept)-[r:AFFECTS]->(b:BusinessConcept) RETURN a.name, r.mechanism, b.name
+
+# View KPI driver tree:
+# MATCH (p:KPI)-[:DRIVEN_BY]->(c:KPI) RETURN p.name, c.name
+
+# View supply chain incidents:
+# MATCH (s:Supplier)-[:HAS_INCIDENT]->(i:SupplyIncident) RETURN s.name, i.type, i.date, i.impact
+
+# View competitor actions affecting regions:
+# MATCH (ca:CompetitorAction)-[:AFFECTS_REGION]->(r:Region) RETURN ca.competitor, ca.type, ca.date, r.name
+
+# View store managers:
+# MATCH (st:Store)-[:MANAGED_BY]->(m:Manager) RETURN st.name, m.name, m.since, m.experience_years

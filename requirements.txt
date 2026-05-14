@@ -1,0 +1,21 @@
+# Google ADK
+google-adk>=1.0.0
+
+# GCP SDKs
+# google-cloud-aiplatform — removed (was only needed for text-embedding-005 and Matching Engine)
+google-cloud-bigquery>=3.20.0
+google-auth>=2.29.0
+
+# Local embeddings (fully offline, no GCP auth required)
+sentence-transformers>=2.7.0
+
+# Neo4j
+neo4j>=5.19.0
+
+# HTTP
+requests>=2.31.0
+
+# API (for non-ADK deployment)
+fastapi>=0.111.0
+uvicorn>=0.29.0
+pydantic>=2.7.0

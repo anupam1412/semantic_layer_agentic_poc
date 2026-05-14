@@ -1,0 +1,1652 @@
+# ===========================================================================
+# SEMANTIC LAYER ONTOLOGY
+# Domain  : Telecom - Network Quality & Call Drop Analysis
+# Version : 6.0 (Aligned to current code)
+# ===========================================================================
+#
+# DESIGN PRINCIPLES
+# -----------------
+# 1. Domain knowledge only - no agent instructions, no procedural steps
+# 2. Every fact declared exactly once - no cross-section duplication
+# 3. Concepts own their complete causal context (caused_by + causes)
+# 4. graph_checks confirm a hypothesis already selected by caused_by
+# 5. Agent framework reads this file unchanged for any domain
+#
+# SECTIONS
+# --------
+#   0  meta           - project config
+#   1  tables + joins - BigQuery physical schema
+#   2  neo4j_schema   - KG node labels and relationship types
+#   3  business       - entities, KPIs, driver tree, concepts, event types
+#   4  schema_mapping - wires business vocabulary to physical storage
+#   5  examples       - SQL and Cypher templates
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# SECTION 0 - META
+# ---------------------------------------------------------------------------
+meta:
+  domain:      "telecom_network_quality"
+  name:        "Telecom Call Drop Analytics"
+  version:     "6.0"
+  description: >
+    Network quality and call drop root-cause analysis covering
+    2G/3G/4G/5G. Call events and measurements in BigQuery.
+    Network topology and real-world events in Neo4j.
+  bigquery:
+    project: "${BIGQUERY_PROJECT}"
+    dataset: "${BIGQUERY_DATASET}"
+  neo4j:
+    uri:      "bolt://${NEO4J_HOST}:7687"
+    database: "neo4j"
+
+
+# ===========================================================================
+# SECTION 1 - BIGQUERY PHYSICAL SCHEMA
+# ===========================================================================
+tables:
+
+  # -- FACT TABLES --
+
+  - name: call_events
+    fqn:   "${meta.bigquery.project}.${meta.bigquery.dataset}.call_events"
+    layer: fact
+    grain: "one row per call attempt"
+    description: "Every call attempt - outcome, duration, signal quality, drop reason"
+    columns:
+      - { name: call_id,            type: STRING,    is_pk: true }
+      - { name: subscriber_id,      type: STRING,    is_fk: true,  references: "subscribers.subscriber_id" }
+      - { name: cell_id,            type: STRING,    is_fk: true,  references: "cells.cell_id" }
+      - { name: tower_id,           type: STRING,    is_fk: true,  references: "towers.tower_id" }
+      - { name: device_id,          type: STRING,    is_fk: true,  references: "devices.device_id" }
+      - { name: region_id,          type: STRING,    is_fk: true,  references: "regions.region_id" }
+      - { name: call_start_ts,      type: TIMESTAMP, is_partition: true }
+      - { name: call_date,          type: DATE,      is_partition: true }
+      - { name: call_duration_sec,  type: INT64 }
+      - { name: call_outcome,       type: STRING,
+          enum: [completed, dropped, blocked, setup_failure] }
+      - { name: drop_reason,        type: STRING,    nullable: true,
+          enum: [radio_link_failure, handover_failure, interference, congestion, equipment_fault] }
+      - { name: technology,         type: STRING,    enum: [2G, 3G, 4G, 5G] }
+      - { name: call_type,          type: STRING,    enum: [voice, video, volte, vonr] }
+      - { name: rsrp_start_dbm,     type: FLOAT64 }
+      - { name: rsrp_end_dbm,       type: FLOAT64 }
+      - { name: sinr_start_db,      type: FLOAT64 }
+      - { name: sinr_end_db,        type: FLOAT64 }
+      - { name: handover_count,     type: INT64 }
+      - { name: handover_success,   type: BOOL }
+
+  - name: network_measurements
+    fqn:   "${meta.bigquery.project}.${meta.bigquery.dataset}.network_measurements"
+    layer: fact
+    grain: "one row per cell per 15-minute interval"
+    description: "NMS counter exports - signal quality, capacity and handover KPIs"
+    columns:
+      - { name: measurement_id,        type: STRING,    is_pk: true }
+      - { name: cell_id,               type: STRING,    is_fk: true,  references: "cells.cell_id" }
+      - { name: tower_id,              type: STRING,    is_fk: true,  references: "towers.tower_id" }
+      - { name: measurement_ts,        type: TIMESTAMP, is_partition: true }
+      - { name: measurement_date,      type: DATE,      is_partition: true }
+      - { name: technology,            type: STRING }
+      - { name: call_attempts,         type: INT64 }
+      - { name: call_drops,            type: INT64 }
+      - { name: call_setups_success,   type: INT64 }
+      - { name: call_setups_fail,      type: INT64 }
+      - { name: handover_attempts,     type: INT64 }
+      - { name: handover_success,      type: INT64 }
+      - { name: handover_fail,         type: INT64 }
+      - { name: avg_rsrp_dbm,          type: FLOAT64 }
+      - { name: avg_sinr_db,           type: FLOAT64 }
+      - { name: avg_throughput_mbps,   type: FLOAT64 }
+      - { name: prb_utilisation_pct,   type: FLOAT64 }
+      - { name: active_ues,            type: INT64 }
+      - { name: interference_level_db, type: FLOAT64 }
+
+  - name: handover_events
+    fqn:   "${meta.bigquery.project}.${meta.bigquery.dataset}.handover_events"
+    layer: fact
+    grain: "one row per handover attempt"
+    description: "Individual handover attempts with outcome and signal conditions"
+    columns:
+      - { name: ho_event_id,     type: STRING,    is_pk: true }
+      - { name: call_id,         type: STRING,    is_fk: true,  references: "call_events.call_id" }
+      - { name: source_cell_id,  type: STRING,    is_fk: true,  references: "cells.cell_id" }
+      - { name: target_cell_id,  type: STRING,    is_fk: true,  references: "cells.cell_id" }
+      - { name: subscriber_id,   type: STRING,    is_fk: true,  references: "subscribers.subscriber_id" }
+      - { name: ho_timestamp,    type: TIMESTAMP }
+      - { name: ho_date,         type: DATE,      is_partition: true }
+      - { name: ho_type,         type: STRING,
+          enum: [intra_frequency, inter_frequency, inter_rat, emergency] }
+      - { name: ho_outcome,      type: STRING,    enum: [success, failure, ping_pong] }
+      - { name: rsrp_trigger_dbm,type: FLOAT64 }
+      - { name: sinr_trigger_db, type: FLOAT64 }
+      - { name: technology,      type: STRING }
+
+  - name: spectrum_interference_logs
+    fqn:   "${meta.bigquery.project}.${meta.bigquery.dataset}.spectrum_interference_logs"
+    layer: fact
+    grain: "one row per interference detection per cell"
+    description: "Interference detection records from drive tests and SON algorithms"
+    columns:
+      - { name: interference_log_id,   type: STRING,  is_pk: true }
+      - { name: cell_id,               type: STRING,  is_fk: true,  references: "cells.cell_id" }
+      - { name: detected_date,         type: DATE,    is_partition: true }
+      - { name: interference_type,     type: STRING,
+          enum: [co_channel, adjacent_channel, external, pilot_pollution] }
+      - { name: interfering_cell_id,   type: STRING,  nullable: true }
+      - { name: interference_level_db, type: FLOAT64 }
+      - { name: band,                  type: STRING }
+      - { name: is_resolved,           type: BOOL }
+
+  # -- DIMENSION TABLES --
+
+  - name: cells
+    fqn:   "${meta.bigquery.project}.${meta.bigquery.dataset}.cells"
+    layer: dimension
+    description: "Cell (sector) master - smallest addressable network unit"
+    columns:
+      - { name: cell_id,           type: STRING,  is_pk: true }
+      - { name: cell_name,         type: STRING }
+      - { name: tower_id,          type: STRING,  is_fk: true,  references: "towers.tower_id" }
+      - { name: region_id,         type: STRING,  is_fk: true,  references: "regions.region_id" }
+      - { name: technology,        type: STRING,  enum: [2G, 3G, 4G, 5G] }
+      - { name: band_mhz,          type: STRING,
+          enum: ["700","800","1800","2100","2600","3500","26000"] }
+      - { name: sector,            type: STRING,  enum: [A, B, C] }
+      - { name: azimuth_deg,       type: INT64 }
+      - { name: tilt_deg,          type: FLOAT64 }
+      - { name: tx_power_dbm,      type: FLOAT64 }
+      - { name: designed_capacity, type: INT64 }
+      - { name: cell_type,         type: STRING,
+          enum: [macro, micro, pico, femto, indoor] }
+      - { name: vendor,            type: STRING,
+          enum: [Ericsson, Nokia, Huawei, ZTE, Samsung] }
+      - { name: pci,               type: INT64 }
+      - { name: is_active,         type: BOOL }
+
+  - name: towers
+    fqn:   "${meta.bigquery.project}.${meta.bigquery.dataset}.towers"
+    layer: dimension
+    description: "Physical tower / mast locations"
+    columns:
+      - { name: tower_id,         type: STRING,  is_pk: true }
+      - { name: tower_name,       type: STRING }
+      - { name: latitude,         type: FLOAT64 }
+      - { name: longitude,        type: FLOAT64 }
+      - { name: height_m,         type: FLOAT64 }
+      - { name: tower_type,       type: STRING,
+          enum: [greenfield, rooftop, monopole, lattice, mast_sharing] }
+      - { name: region_id,        type: STRING,  is_fk: true,  references: "regions.region_id" }
+      - { name: cluster_id,       type: STRING,  is_fk: true,  references: "network_clusters.cluster_id" }
+      - { name: power_source,     type: STRING,  enum: [grid, generator, solar, hybrid] }
+      - { name: has_backup_power, type: BOOL }
+      - { name: is_active,        type: BOOL }
+
+  - name: regions
+    fqn:   "${meta.bigquery.project}.${meta.bigquery.dataset}.regions"
+    layer: dimension
+    description: "Geographic and operational regions"
+    columns:
+      - { name: region_id,          type: STRING,  is_pk: true }
+      - { name: region_name,        type: STRING }
+      - { name: region_type,        type: STRING,
+          enum: [urban, suburban, rural, indoor, transport] }
+      - { name: country,            type: STRING }
+      - { name: market,             type: STRING,
+          enum: [consumer, enterprise, wholesale] }
+      - { name: population_density, type: STRING,  enum: [high, medium, low] }
+
+  - name: network_clusters
+    fqn:   "${meta.bigquery.project}.${meta.bigquery.dataset}.network_clusters"
+    layer: dimension
+    description: "Logical grouping of towers managed as a performance unit"
+    columns:
+      - { name: cluster_id,   type: STRING,  is_pk: true }
+      - { name: cluster_name, type: STRING }
+      - { name: region_id,    type: STRING,  is_fk: true,  references: "regions.region_id" }
+      - { name: cluster_type, type: STRING,
+          enum: [urban_core, suburban, highway, rural, venue] }
+      - { name: tower_count,  type: INT64 }
+
+  - name: subscribers
+    fqn:   "${meta.bigquery.project}.${meta.bigquery.dataset}.subscribers"
+    layer: dimension
+    description: "Subscriber / SIM master data"
+    columns:
+      - { name: subscriber_id,     type: STRING,  is_pk: true }
+      - { name: subscription_type, type: STRING,
+          enum: [prepaid, postpaid, iot, enterprise] }
+      - { name: segment,           type: STRING,
+          enum: [consumer, enterprise, mvno, wholesale] }
+      - { name: loyalty_tier,      type: STRING,
+          enum: [standard, silver, gold, platinum] }
+      - { name: home_region_id,    type: STRING,  is_fk: true,  references: "regions.region_id" }
+      - { name: churn_risk_score,  type: FLOAT64 }
+      - { name: is_active,         type: BOOL }
+
+  - name: devices
+    fqn:   "${meta.bigquery.project}.${meta.bigquery.dataset}.devices"
+    layer: dimension
+    description: "Device / UE reference data"
+    columns:
+      - { name: device_id,          type: STRING,  is_pk: true }
+      - { name: manufacturer,       type: STRING }
+      - { name: model,              type: STRING }
+      - { name: technology_support, type: STRING,  enum: [3G, 4G, 5G] }
+      - { name: volte_capable,      type: BOOL }
+      - { name: vonr_capable,       type: BOOL }
+      - { name: known_issue_flag,   type: BOOL }
+
+  # -- AGGREGATE TABLES --
+
+  - name: network_kpi_targets
+    fqn:   "${meta.bigquery.project}.${meta.bigquery.dataset}.network_kpi_targets"
+    layer: aggregate
+    description: "Monthly KPI targets per region and technology"
+    columns:
+      - { name: target_id,           type: STRING,   is_pk: true }
+      - { name: region_id,           type: STRING,   is_fk: true,  references: "regions.region_id" }
+      - { name: technology,          type: STRING }
+      - { name: target_month,        type: DATE }
+      - { name: target_cdr,          type: FLOAT64 }
+      - { name: target_cssr,         type: FLOAT64 }
+      - { name: target_hosr,         type: FLOAT64 }
+      - { name: target_throughput,   type: FLOAT64 }
+      - { name: target_availability, type: FLOAT64 }
+
+  - name: maintenance_work_orders
+    fqn:   "${meta.bigquery.project}.${meta.bigquery.dataset}.maintenance_work_orders"
+    layer: aggregate
+    description: "Planned and corrective maintenance work orders"
+    columns:
+      - { name: wo_id,          type: STRING,  is_pk: true }
+      - { name: tower_id,       type: STRING,  is_fk: true,  references: "towers.tower_id" }
+      - { name: cell_id,        type: STRING,  is_fk: true,  references: "cells.cell_id", nullable: true }
+      - { name: wo_type,        type: STRING,
+          enum: [preventive, corrective, upgrade, swap, emergency] }
+      - { name: status,         type: STRING,
+          enum: [planned, in_progress, completed, cancelled] }
+      - { name: scheduled_date, type: DATE }
+      - { name: completed_date, type: DATE,    nullable: true }
+      - { name: caused_outage,  type: BOOL }
+
+
+# -- TABLE JOINS --
+joins:
+  - { from: call_events,                to: subscribers,       type: MANY_TO_ONE,
+      condition: "call_events.subscriber_id = subscribers.subscriber_id" }
+  - { from: call_events,                to: cells,             type: MANY_TO_ONE,
+      condition: "call_events.cell_id = cells.cell_id" }
+  - { from: call_events,                to: towers,            type: MANY_TO_ONE,
+      condition: "call_events.tower_id = towers.tower_id" }
+  - { from: call_events,                to: devices,           type: MANY_TO_ONE,
+      condition: "call_events.device_id = devices.device_id" }
+  - { from: call_events,                to: regions,           type: MANY_TO_ONE,
+      condition: "call_events.region_id = regions.region_id" }
+  - { from: network_measurements,       to: cells,             type: MANY_TO_ONE,
+      condition: "network_measurements.cell_id = cells.cell_id" }
+  - { from: network_measurements,       to: towers,            type: MANY_TO_ONE,
+      condition: "network_measurements.tower_id = towers.tower_id" }
+  - { from: handover_events,            to: call_events,       type: MANY_TO_ONE,
+      condition: "handover_events.call_id = call_events.call_id" }
+  - { from: handover_events,            to: cells,             type: MANY_TO_ONE,
+      condition: "handover_events.source_cell_id = cells.cell_id" }
+  - { from: spectrum_interference_logs, to: cells,             type: MANY_TO_ONE,
+      condition: "spectrum_interference_logs.cell_id = cells.cell_id" }
+  - { from: cells,                      to: towers,            type: MANY_TO_ONE,
+      condition: "cells.tower_id = towers.tower_id" }
+  - { from: cells,                      to: regions,           type: MANY_TO_ONE,
+      condition: "cells.region_id = regions.region_id" }
+  - { from: towers,                     to: regions,           type: MANY_TO_ONE,
+      condition: "towers.region_id = regions.region_id" }
+  - { from: towers,                     to: network_clusters,  type: MANY_TO_ONE,
+      condition: "towers.cluster_id = network_clusters.cluster_id" }
+  - { from: network_clusters,           to: regions,           type: MANY_TO_ONE,
+      condition: "network_clusters.region_id = regions.region_id" }
+  - { from: network_kpi_targets,        to: regions,           type: MANY_TO_ONE,
+      condition: "network_kpi_targets.region_id = regions.region_id" }
+  - { from: maintenance_work_orders,    to: towers,            type: MANY_TO_ONE,
+      condition: "maintenance_work_orders.tower_id = towers.tower_id" }
+  - { from: maintenance_work_orders,    to: cells,             type: MANY_TO_ONE,
+      condition: "maintenance_work_orders.cell_id = cells.cell_id" }
+  - { from: subscribers,                to: regions,           type: MANY_TO_ONE,
+      condition: "subscribers.home_region_id = regions.region_id" }
+
+
+# ===========================================================================
+# SECTION 2 - NEO4J KG SCHEMA
+# ===========================================================================
+neo4j_schema:
+
+  kg_labels:
+
+    - label:    KGCell
+      bq_table: cells
+      bq_pk:    cell_id
+      description: "Cell (sector) - smallest addressable network unit"
+      key_props: [cell_id, technology, band_mhz, cell_type, vendor, sector, pci]
+
+    - label:    KGTower
+      bq_table: towers
+      bq_pk:    tower_id
+      description: "Physical tower / mast location"
+      key_props: [tower_id, tower_name, latitude, longitude, tower_type, power_source, has_backup_power]
+
+    - label:    KGCluster
+      bq_table: network_clusters
+      bq_pk:    cluster_id
+      description: "Logical grouping of towers managed as a performance unit"
+      key_props: [cluster_id, cluster_name, cluster_type]
+
+    - label:    KGRegion
+      bq_table: regions
+      bq_pk:    region_id
+      description: "Geographic and operational region"
+      key_props: [region_id, region_name, region_type, population_density]
+
+    - label:    KGSubscriber
+      bq_table: subscribers
+      bq_pk:    subscriber_id
+      description: "Subscriber / SIM - anonymized"
+      key_props: [subscriber_id, segment, loyalty_tier, churn_risk_score]
+
+    - label:    KGEquipment
+      bq_table: null
+      description: "Hardware units (RRU, BBU, antenna, power unit). KG-only."
+      key_props:
+        - { name: equipment_id,      type: STRING,  is_pk: true }
+        - { name: equipment_type,    type: STRING,
+            enum: [RRU, BBU, ANTENNA, POWER_SUPPLY, RECTIFIER, ROUTER] }
+        - { name: vendor,            type: STRING }
+        - { name: model,             type: STRING }
+        - { name: firmware_version,  type: STRING }
+        - { name: install_date,      type: DATE }
+        - { name: status,            type: STRING,
+            enum: [active, maintenance, failed, decommissioned] }
+
+    - label: KGEvent
+      bq_table: null
+      description: "Real-world event instance. event_type = event_types.id."
+      key_props:
+        - { name: event_id,             type: STRING,  is_pk: true }
+        - { name: event_type,           type: STRING }
+        - { name: severity,             type: STRING,  enum: [low, medium, high, critical] }
+        - { name: start_date,           type: DATE }
+        - { name: end_date,             type: DATE,    nullable: true }
+        - { name: is_resolved,          type: BOOL }
+        - { name: source,               type: STRING,
+            enum: [nms_alarm, field_report, automated_detection, manual] }
+        - { name: description,          type: STRING,  nullable: true }
+        - { name: subscribers_affected, type: INT64,   nullable: true }
+        - { name: cells_affected,       type: INT64,   nullable: true }
+
+    # -- Ontology-level nodes --
+    - label: OntEntity
+      description: "Ontology entity type definition"
+      key_props: [entity_id, display_name]
+
+    - label: OntConcept
+      description: "Ontology concept definition"
+      key_props: [concept_id, display_name]
+
+    - label: OntEvent
+      description: "Ontology event type definition"
+      key_props: [event_type_id, display_name, domain]
+
+
+  kg_relationships:
+
+    # -- Topology relationships --
+    - type: HAS_CELL
+      from: KGTower
+      to:   KGCell
+      props: [sector_number]
+      description: "Tower hosts one or more cell sectors"
+
+    - type: PART_OF_CLUSTER
+      from: KGTower
+      to:   KGCluster
+      description: "Tower belongs to a network management cluster"
+
+    - type: LOCATED_IN
+      from: KGTower
+      to:   KGRegion
+      description: "Tower physical location within a region"
+
+    - type: CLUSTER_IN_REGION
+      from: KGCluster
+      to:   KGRegion
+      description: "Cluster belongs to a geographic region"
+
+    # -- Cell-to-cell relationships --
+    - type: NEIGHBOURS
+      from: KGCell
+      to:   KGCell
+      props: [ho_direction, ho_offset_db, is_active_neighbour]
+      description: "Handover neighbour relation table entry (directional or bidirectional)"
+
+    - type: INTERFERES_WITH
+      from: KGCell
+      to:   KGCell
+      props: [interference_type, interference_db, detected_date, is_active]
+      description: "Known or detected RF interference between cells"
+
+    # -- Equipment relationships --
+    - type: EQUIPPED_WITH
+      from: KGCell
+      to:   KGEquipment
+      props: [equipment_role]
+      description: "Cell uses a specific hardware unit (RRU, BBU, antenna)"
+
+    - type: POWERED_BY
+      from: KGTower
+      to:   KGEquipment
+      props: [power_type, capacity_kw, backup_hours]
+      description: "Tower power supply unit (mains, generator, solar)"
+
+    # -- Event/incident relationships --
+    - type: IMPACTED_BY
+      from: KGEntity
+      to:   KGEvent
+      props: [impact_type, impact_severity, detected_date]
+      description: "Entity is impacted by an event or incident"
+
+    - type: CAUSED_BY
+      from: KGEvent
+      to:   KGEvent
+      props: [mechanism, lag_minutes]
+      description: "Event cascade - one incident caused another"
+
+    # -- Subscriber relationships --
+    - type: SERVED_BY
+      from: KGSubscriber
+      to:   KGCell
+      props: [relationship_type, pct_calls, pct_data]
+      description: "Subscriber home or frequently serving cell"
+
+    # -- Ontology bridging relationships --
+    - type: INSTANCE_OF
+      from: KGEntity
+      to:   OntEntity
+      description: "Links KG instance node to ontology entity definition"
+
+    - type: EVENT_INSTANCE_OF
+      from: KGEvent
+      to:   OntEvent
+      description: "Links KG event instance to ontology event type definition"
+
+    - type: TRIGGERS
+      from: OntEvent
+      to:   OntConcept
+      description: "Event type triggers concept (from event_types.triggers_concepts)"
+
+    - type: CAUSES
+      from: OntConcept
+      to:   OntConcept
+      props: [strength, time_lag, plain_english]
+      description: "Concept causes another concept (causal chain for RCA)"
+
+
+# ===========================================================================
+# SECTION 3 - BUSINESS VOCABULARY
+# ===========================================================================
+business:
+
+  # -- ENTITIES --
+  entities:
+
+    - id: cell
+      display_name: "Cell / Sector"
+      synonyms: [sector, "cell site", "radio cell", "eNodeB cell", "gNB cell",
+                 "LTE cell", "NR cell"]
+      primary_kpi: call_drop_rate
+      hierarchy_level: 4
+      attributes: [technology, band_mhz, cell_type, vendor, sector]
+
+    - id: tower
+      display_name: "Tower / Site"
+      synonyms: [mast, site, "base station", BTS, eNodeB, gNB, "radio site",
+                 "cell tower", "transmission site"]
+      primary_kpi: call_drop_rate
+      hierarchy_level: 3
+      attributes: [tower_type, power_source, has_backup_power]
+
+    - id: network_cluster
+      display_name: "Network Cluster"
+      synonyms: [cluster, "site cluster", "OMC cluster", "performance cluster"]
+      primary_kpi: call_drop_rate
+      hierarchy_level: 2
+      attributes: [cluster_type]
+
+    - id: region
+      display_name: "Region"
+      synonyms: [area, zone, geography, "market area", "coverage area", territory]
+      primary_kpi: call_drop_rate
+      hierarchy_level: 1
+      attributes: [region_type, population_density, market]
+
+    - id: subscriber
+      display_name: "Subscriber"
+      synonyms: [customer, SIM, user, MSISDN, "mobile user"]
+      primary_kpi: subscriber_affected_rate
+      hierarchy_level: 5
+      attributes: [segment, subscription_type, loyalty_tier, churn_risk_score]
+
+    - id: device
+      display_name: "Device / UE"
+      synonyms: [handset, UE, "user equipment", phone, "mobile device", smartphone]
+      primary_kpi: call_drop_rate
+      hierarchy_level: 5
+      attributes: [manufacturer, model, technology_support, volte_capable]
+
+    - id: network_equipment
+      display_name: "Network Equipment"
+      synonyms: [hardware, RRU, BBU, "radio unit", antenna, "power unit"]
+      primary_kpi: network_availability
+      hierarchy_level: 5
+      attributes: [equipment_type, vendor, model, firmware_version]
+
+
+  # -- KPIs --
+  kpis:
+
+    - name: call_drop_rate
+      display_name: "Call Drop Rate (CDR)"
+      synonyms: [CDR, "drop rate", "call drops", "dropped calls", "call failure rate"]
+      unit: "%"
+      grain: hourly
+      direction: lower_is_better
+      expression: >
+        SAFE_DIVIDE(
+          COUNTIF(call_outcome = 'dropped'),
+          COUNTIF(call_outcome IN ('completed','dropped'))) * 100
+      dimensions: [cell_id, tower_id, region_id, technology, call_type, drop_reason]
+      thresholds: { green: "< 2.0", amber: "< 5.0", red: ">= 5.0" }
+      benchmark: "< 2% for 4G urban, < 1% for 5G"
+
+    - name: call_setup_success_rate
+      display_name: "Call Setup Success Rate (CSSR)"
+      synonyms: [CSSR, "call success rate", "setup success", "call accessibility"]
+      unit: "%"
+      grain: hourly
+      direction: higher_is_better
+      expression: >
+        SAFE_DIVIDE(
+          COUNTIF(call_outcome IN ('completed','dropped')),
+          COUNT(*)) * 100
+      dimensions: [cell_id, tower_id, region_id, technology]
+      thresholds: { green: ">= 98.0", amber: ">= 95.0", red: "< 95.0" }
+      benchmark: "> 98%"
+
+    - name: handover_success_rate
+      display_name: "Handover Success Rate (HOSR)"
+      synonyms: [HOSR, "handover success", "HO success rate", "mobility performance"]
+      unit: "%"
+      grain: hourly
+      direction: higher_is_better
+      expression: >
+        SAFE_DIVIDE(SUM(handover_success), SUM(handover_attempts)) * 100
+      dimensions: [cell_id, tower_id, region_id, technology, ho_type]
+      thresholds: { green: ">= 98.0", amber: ">= 95.0", red: "< 95.0" }
+      benchmark: "> 98%"
+
+    - name: radio_link_failure_rate
+      display_name: "Radio Link Failure Rate (RLFR)"
+      synonyms: [RLFR, "RLF rate", "radio failure", "link failure"]
+      unit: "%"
+      grain: hourly
+      direction: lower_is_better
+      expression: >
+        SAFE_DIVIDE(
+          COUNTIF(call_outcome = 'dropped' AND drop_reason = 'radio_link_failure'),
+          COUNTIF(call_outcome IN ('completed','dropped'))) * 100
+      dimensions: [cell_id, tower_id, region_id, technology]
+      thresholds: { green: "< 1.0", amber: "< 3.0", red: ">= 3.0" }
+
+    - name: interference_drop_rate
+      display_name: "Interference Drop Rate"
+      synonyms: ["interference drops", "interference ratio", "RF interference rate"]
+      unit: "%"
+      grain: hourly
+      direction: lower_is_better
+      expression: >
+        SAFE_DIVIDE(
+          COUNTIF(call_outcome = 'dropped' AND drop_reason = 'interference'),
+          COUNTIF(call_outcome IN ('completed','dropped'))) * 100
+      dimensions: [cell_id, tower_id, region_id, band_mhz]
+      thresholds: { green: "< 1.0", amber: "< 3.0", red: ">= 3.0" }
+
+    - name: avg_rsrp
+      display_name: "Average RSRP (dBm)"
+      synonyms: [RSRP, "signal strength", "signal level", "coverage level"]
+      unit: "dBm"
+      grain: hourly
+      direction: higher_is_better
+      expression: "AVG(avg_rsrp_dbm)"
+      dimensions: [cell_id, tower_id, region_id, technology]
+      thresholds: { green: ">= -100", amber: ">= -110", red: "< -110" }
+      benchmark: "> -100 dBm for 4G"
+
+    - name: avg_sinr
+      display_name: "Average SINR (dB)"
+      synonyms: [SINR, "signal quality", "signal to noise ratio", SNR]
+      unit: "dB"
+      grain: hourly
+      direction: higher_is_better
+      expression: "AVG(avg_sinr_db)"
+      dimensions: [cell_id, tower_id, region_id, technology]
+      thresholds: { green: ">= 10", amber: ">= 0", red: "< 0" }
+      benchmark: "> 10 dB for 4G"
+
+    - name: prb_utilisation
+      display_name: "PRB Utilisation (%)"
+      synonyms: ["PRB utilisation", "resource utilisation", "cell load", "congestion level"]
+      unit: "%"
+      grain: hourly
+      direction: lower_is_better
+      expression: "AVG(prb_utilisation_pct)"
+      dimensions: [cell_id, tower_id, region_id, technology]
+      thresholds: { green: "< 70", amber: "< 85", red: ">= 85" }
+      benchmark: "< 70% average"
+
+    - name: avg_throughput
+      display_name: "Average User Throughput (Mbps)"
+      synonyms: [throughput, "data speed", "user speed", "download speed"]
+      unit: "Mbps"
+      grain: hourly
+      direction: higher_is_better
+      expression: "AVG(avg_throughput_mbps)"
+      dimensions: [cell_id, tower_id, region_id, technology]
+      thresholds: { green: ">= 20", amber: ">= 5", red: "< 5" }
+      benchmark: "> 20 Mbps for 4G"
+
+    - name: congestion_rate
+      display_name: "Congestion Rate"
+      synonyms: [congestion, "overload rate", "high load rate", "capacity stress"]
+      unit: "%"
+      grain: daily
+      direction: lower_is_better
+      expression: >
+        SAFE_DIVIDE(COUNTIF(prb_utilisation_pct >= 85), COUNT(*)) * 100
+      dimensions: [cell_id, tower_id, region_id, technology]
+      thresholds: { green: "< 5", amber: "< 20", red: ">= 20" }
+
+    - name: network_availability
+      display_name: "Network Availability (%)"
+      synonyms: [availability, uptime, "network uptime", "cell availability"]
+      unit: "%"
+      grain: monthly
+      direction: higher_is_better
+      expression: >
+        SAFE_DIVIDE(COUNTIF(call_outcome != 'blocked'), COUNT(*)) * 100
+      dimensions: [cell_id, tower_id, region_id, technology]
+      thresholds: { green: ">= 99.9", amber: ">= 99.0", red: "< 99.0" }
+      benchmark: "> 99.9%"
+
+    - name: cdr_target_attainment
+      display_name: "CDR Target Attainment"
+      synonyms: ["CDR target", "quality target attainment", "target attainment"]
+      unit: "ratio"
+      grain: monthly
+      direction: lower_is_better
+      expression: >
+        SAFE_DIVIDE(
+          SAFE_DIVIDE(COUNTIF(ce.call_outcome='dropped'),
+                      COUNTIF(ce.call_outcome IN ('completed','dropped'))) * 100,
+          MAX(t.target_cdr))
+      dimensions: [region_id, technology]
+      thresholds: { green: "< 1.0", amber: "< 1.5", red: ">= 1.5" }
+
+    - name: subscriber_affected_rate
+      display_name: "Subscribers Affected (%)"
+      synonyms: ["affected subscribers", "impacted subscribers", "complaint risk"]
+      unit: "%"
+      grain: daily
+      direction: lower_is_better
+      expression: >
+        SAFE_DIVIDE(
+          COUNT(DISTINCT CASE WHEN call_outcome='dropped' THEN subscriber_id END),
+          COUNT(DISTINCT subscriber_id)) * 100
+      dimensions: [region_id, segment, technology]
+      thresholds: { green: "< 5", amber: "< 15", red: ">= 15" }
+
+    - name: repeat_drop_rate
+      display_name: "Repeat Drop Rate"
+      synonyms: ["repeat drops", "chronic drop rate", "multi-drop subscribers"]
+      unit: "%"
+      grain: daily
+      direction: lower_is_better
+      expression: >
+        SAFE_DIVIDE(
+          COUNT(DISTINCT CASE WHEN drop_count > 1 THEN subscriber_id END),
+          COUNT(DISTINCT subscriber_id)) * 100
+      dimensions: [region_id, segment, technology]
+      thresholds: { green: "< 2", amber: "< 5", red: ">= 5" }
+
+    - name: ping_pong_rate
+      display_name: "Ping-Pong Handover Rate"
+      synonyms: ["ping pong", "oscillating handovers", "HO ping-pong"]
+      unit: "%"
+      grain: hourly
+      direction: lower_is_better
+      expression: >
+        SAFE_DIVIDE(COUNTIF(ho_outcome = 'ping_pong'), COUNT(*)) * 100
+      dimensions: [cell_id, tower_id, region_id, technology]
+      thresholds: { green: "< 2", amber: "< 5", red: ">= 5" }
+
+    # -- ADDITIONAL KPIs (from spec) --
+
+    - name: congestion_persistence
+      display_name: "Congestion Persistence (Days)"
+      synonyms: ["consecutive congestion", "sustained congestion", "chronic congestion"]
+      unit: "days"
+      grain: daily
+      direction: lower_is_better
+      expression: >
+        COUNT(DISTINCT CASE WHEN prb_utilisation_pct >= 85 THEN measurement_date END)
+      dimensions: [cell_id, tower_id, region_id, technology]
+      thresholds: { green: "< 3", amber: "< 7", red: ">= 7" }
+      benchmark: ">= 7 consecutive days -> structural shortfall"
+
+    - name: capacity_vs_design
+      display_name: "Capacity vs Design Ratio"
+      synonyms: ["design utilisation", "capacity headroom", "design ratio"]
+      unit: "ratio"
+      grain: hourly
+      direction: lower_is_better
+      expression: >
+        SAFE_DIVIDE(AVG(active_ues), MAX(designed_capacity))
+      dimensions: [cell_id, tower_id, technology]
+      thresholds: { green: "< 0.7", amber: "< 0.9", red: ">= 0.9" }
+      benchmark: "> 0.9 -> near designed limit"
+
+    - name: cdr_spike_ratio
+      display_name: "CDR Spike Ratio"
+      synonyms: ["sudden CDR increase", "CDR jump", "CDR spike"]
+      unit: "ratio"
+      grain: hourly
+      direction: lower_is_better
+      expression: >
+        SAFE_DIVIDE(current_hour_cdr, previous_24h_avg_cdr)
+      dimensions: [cell_id, tower_id, vendor, technology]
+      thresholds: { green: "< 1.5", amber: "< 3.0", red: ">= 3.0" }
+      benchmark: ">= 3x baseline -> sudden fault"
+
+    - name: vendor_concentration
+      display_name: "Vendor Concentration (%)"
+      synonyms: ["single vendor", "vendor share", "vendor dominance"]
+      unit: "%"
+      grain: daily
+      direction: lower_is_better
+      expression: >
+        SAFE_DIVIDE(MAX(vendor_cell_count), SUM(vendor_cell_count)) * 100
+      dimensions: [vendor, technology, region_id]
+      thresholds: { green: "< 50", amber: "< 80", red: ">= 80" }
+      benchmark: ">= 80% same vendor -> vendor-specific issue"
+
+    - name: outage_duration
+      display_name: "Outage Duration (Hours)"
+      synonyms: ["downtime", "offline duration", "outage length"]
+      unit: "hours"
+      grain: hourly
+      direction: lower_is_better
+      expression: >
+        TIMESTAMP_DIFF(recovery_ts, outage_start_ts, HOUR)
+      dimensions: [cell_id, tower_id, region_id]
+      thresholds: { green: "< 4", amber: "< 8", red: ">= 8" }
+      benchmark: "< 4h battery; 4-8h generator; > 8h access denied"
+
+    - name: churn_risk_concentration
+      display_name: "Churn Risk Concentration"
+      synonyms: ["high risk subscribers", "churn exposure", "churn risk"]
+      unit: "score"
+      grain: daily
+      direction: lower_is_better
+      expression: "AVG(churn_risk_score)"
+      dimensions: [cell_id, region_id, segment]
+      thresholds: { green: "< 0.3", amber: "< 0.6", red: ">= 0.6" }
+
+
+  # -- KPI DRIVER TREE --
+  kpi_driver_tree:
+
+    # CDR drivers
+    - { parent: call_drop_rate, child: avg_rsrp,
+        direction: negative,
+        plain_english: "Lower RSRP -> weaker signal -> more radio link failures -> higher CDR" }
+    - { parent: call_drop_rate, child: avg_sinr,
+        direction: negative,
+        plain_english: "Lower SINR -> worse signal quality -> more interference drops -> higher CDR" }
+    - { parent: call_drop_rate, child: handover_success_rate,
+        direction: negative,
+        plain_english: "Lower HOSR -> more failed handovers -> drops at cell boundaries" }
+    - { parent: call_drop_rate, child: congestion_rate,
+        direction: positive,
+        plain_english: "Higher congestion -> resource exhaustion -> scheduler drops connections" }
+    - { parent: call_drop_rate, child: interference_drop_rate,
+        direction: positive,
+        plain_english: "Higher interference drops are a direct component of total CDR" }
+    - { parent: call_drop_rate, child: radio_link_failure_rate,
+        direction: positive,
+        plain_english: "Higher radio link failures are a direct component of total CDR" }
+    - { parent: call_drop_rate, child: network_availability,
+        direction: negative,
+        plain_english: "Lower availability -> cells offline -> active calls are dropped" }
+
+    # HOSR drivers
+    - { parent: handover_success_rate, child: avg_rsrp,
+        direction: positive,
+        plain_english: "Lower RSRP -> coverage gap -> no HO target -> handover failure" }
+    - { parent: handover_success_rate, child: avg_sinr,
+        direction: positive,
+        plain_english: "Lower SINR -> interference -> premature HO trigger -> HO failure" }
+    - { parent: handover_success_rate, child: ping_pong_rate,
+        direction: negative,
+        plain_english: "Higher ping-pong -> HO thresholds misconfigured -> HO instability" }
+
+    # SINR drivers
+    - { parent: avg_sinr, child: interference_drop_rate,
+        direction: negative,
+        plain_english: "Higher interference drops signal the SINR environment is degraded" }
+
+    # Throughput drivers
+    - { parent: avg_throughput, child: prb_utilisation,
+        direction: negative,
+        plain_english: "Higher PRB utilisation -> congestion -> scheduler reduces user throughput" }
+    - { parent: avg_throughput, child: avg_sinr,
+        direction: positive,
+        plain_english: "Lower SINR -> lower modulation order -> lower achievable throughput" }
+
+    # Subscriber impact drivers
+    - { parent: subscriber_affected_rate, child: call_drop_rate,
+        direction: positive,
+        plain_english: "Higher CDR -> more subscribers experience at least one dropped call" }
+    - { parent: repeat_drop_rate, child: subscriber_affected_rate,
+        direction: positive,
+        plain_english: "More affected subscribers -> larger pool at risk of repeat drops" }
+
+
+  # -- CONCEPTS --
+  concepts:
+
+    # ======================================================================
+    # ROOT CONCEPTS (caused_by: [])
+    # ======================================================================
+
+    - id: external_interference
+      display_name: "External Interference"
+      synonyms: ["external interference", "rogue transmitter", "illegal transmitter",
+                 "radar interference", "cross-operator interference"]
+      kpis:     [avg_sinr, interference_drop_rate, call_drop_rate]
+      entities: [cell, tower, region]
+      caused_by: []
+      causes:
+        - { concept: interference_degradation, strength: strong, time_lag: "immediate",
+            plain_english: "External RF source raises noise floor, degrading SINR" }
+
+    - id: capacity_shortfall
+      display_name: "Capacity Shortfall"
+      synonyms: ["capacity shortage", "insufficient capacity", "spectrum shortage",
+                 "upgrade needed", "spectrum constraint"]
+      kpis:     [prb_utilisation, congestion_rate, call_drop_rate, avg_throughput]
+      entities: [cell, tower, region]
+      caused_by: []
+      causes:
+        - { concept: network_congestion,    strength: strong,   time_lag: "1-4 weeks",
+            plain_english: "Insufficient spectrum means demand permanently exceeds capacity" }
+        - { concept: call_drop_degradation, strength: moderate, time_lag: "1-4 weeks",
+            plain_english: "Persistent congestion from structural deficit continuously elevates CDR" }
+
+    - id: software_fault
+      display_name: "Software / Firmware Fault"
+      synonyms: ["software bug", "firmware issue", "SW fault", "node crash",
+                 "firmware regression", "software upgrade impact"]
+      kpis:     [call_drop_rate, network_availability, call_setup_success_rate]
+      entities: [cell, tower, network_equipment]
+      caused_by: []
+      causes:
+        - { concept: call_drop_degradation, strength: strong,   time_lag: "immediate",
+            plain_english: "Software crash causes cell reset or repeated UE disconnection" }
+        - { concept: equipment_failure,     strength: moderate, time_lag: "minutes",
+            plain_english: "Unrecoverable software crash requires hardware restart" }
+
+    - id: severe_weather
+      display_name: "Severe Weather"
+      synonyms: ["storm", "weather event", "flooding", "lightning", "ice storm",
+                 "high winds", "extreme weather"]
+      kpis:     [network_availability, call_drop_rate]
+      entities: [tower, region]
+      caused_by: []
+      causes:
+        - { concept: power_outage,      strength: strong,   time_lag: "immediate",
+            plain_english: "Storm or lightning causes mains power failure at tower site" }
+        - { concept: equipment_failure, strength: moderate, time_lag: "immediate",
+            plain_english: "Wind or lightning damages antenna or equipment" }
+
+    - id: power_theft
+      display_name: "Power Theft / Vandalism"
+      synonyms: ["power theft", "vandalism", "cable theft", "equipment theft", "site break-in"]
+      kpis:     [network_availability, call_drop_rate]
+      entities: [tower]
+      caused_by: []
+      causes:
+        - { concept: power_outage, strength: strong, time_lag: "immediate",
+            plain_english: "Theft of power cables causes unplanned outage" }
+
+    - id: new_cell_activation
+      display_name: "New Cell / Carrier Activation"
+      synonyms: ["new cell", "carrier activation", "cell launch", "5G launch", "capacity expansion"]
+      kpis:     [avg_sinr, handover_success_rate]
+      entities: [cell, tower]
+      caused_by: []
+      causes:
+        - { concept: interference_degradation,   strength: moderate, time_lag: "1-3 days",
+            plain_english: "New cell changes the interference environment in the cluster" }
+        - { concept: parameter_misconfiguration, strength: moderate, time_lag: "1-3 days",
+            plain_english: "New cell activation requires neighbour list update that was missed" }
+
+    - id: parameter_change_event
+      display_name: "Parameter Change Event"
+      synonyms: ["config change", "parameter update", "SON change", "optimization"]
+      kpis:     [handover_success_rate, call_drop_rate]
+      entities: [cell, tower]
+      caused_by: []
+      causes:
+        - { concept: parameter_misconfiguration, strength: strong, time_lag: "immediate",
+            plain_english: "Incorrect radio parameter change applied to cell or cluster" }
+
+    - id: firmware_upgrade_event
+      display_name: "Firmware Upgrade Event"
+      synonyms: ["firmware update", "software upgrade", "SW update", "patch"]
+      kpis:     [call_drop_rate, network_availability]
+      entities: [cell, tower, network_equipment]
+      caused_by: []
+      causes:
+        - { concept: software_fault,             strength: moderate, time_lag: "immediate",
+            plain_english: "Firmware upgrade introduces defect" }
+        - { concept: parameter_misconfiguration, strength: moderate, time_lag: "immediate",
+            plain_english: "Firmware upgrade reset or altered parameter defaults" }
+
+    - id: traffic_surge_event
+      display_name: "Traffic Surge Event"
+      synonyms: ["traffic spike", "event surge", "concert", "football match", "mass gathering"]
+      kpis:     [prb_utilisation, congestion_rate, call_drop_rate]
+      entities: [cell, tower, network_cluster]
+      caused_by: []
+      causes:
+        - { concept: network_congestion, strength: strong, time_lag: "immediate",
+            plain_english: "Sudden traffic surge exhausts radio resources on affected cells" }
+
+
+    # ======================================================================
+    # INTERMEDIATE CONCEPTS
+    # ======================================================================
+
+    - id: power_outage
+      display_name: "Power Outage"
+      synonyms: ["power failure", "power cut", "mains failure", "electricity outage", "generator failure"]
+      kpis:     [network_availability, call_drop_rate]
+      entities: [tower, cell]
+      caused_by:
+        - { concept: severe_weather,  strength: strong,   time_lag: "immediate",
+            plain_english: "Storm or lightning causes mains power failure at tower site" }
+        - { concept: power_theft,     strength: strong,   time_lag: "immediate",
+            plain_english: "Theft of power cables causes unplanned outage" }
+      causes:
+        - { concept: equipment_failure,     strength: strong,   time_lag: "immediate",
+            plain_english: "Loss of power shuts down active equipment" }
+        - { concept: call_drop_degradation, strength: strong,   time_lag: "immediate",
+            plain_english: "Cell goes offline during power loss - all active calls dropped" }
+        - { concept: coverage_degradation,  strength: moderate, time_lag: "immediate",
+            plain_english: "Reduced power mode on battery backup lowers cell tx power" }
+
+    - id: equipment_failure
+      display_name: "Equipment Failure"
+      synonyms: ["hardware failure", "equipment fault", "RRU failure", "BBU fault",
+                 "antenna fault", "node failure", "hardware fault"]
+      kpis:     [network_availability, call_drop_rate, call_setup_success_rate]
+      entities: [cell, tower, network_equipment]
+      caused_by:
+        - { concept: power_outage,   strength: strong,   time_lag: "immediate",
+            plain_english: "Loss of power shuts down active equipment" }
+        - { concept: software_fault, strength: moderate, time_lag: "minutes",
+            plain_english: "Unrecoverable software crash requires hardware restart" }
+        - { concept: severe_weather, strength: moderate, time_lag: "immediate",
+            plain_english: "Wind or lightning damages antenna or equipment" }
+      causes:
+        - { concept: call_drop_degradation, strength: strong, time_lag: "immediate",
+            plain_english: "Failed hardware causes radio link loss or cell outage" }
+        - { concept: coverage_degradation,  strength: strong, time_lag: "immediate",
+            plain_english: "Faulty RRU or antenna reduces transmit power and coverage footprint" }
+
+    - id: coverage_degradation
+      display_name: "Coverage Degradation"
+      synonyms: ["poor coverage", "weak signal", "coverage hole", "RSRP degradation", "no signal"]
+      kpis:     [avg_rsrp, call_drop_rate, call_setup_success_rate]
+      entities: [cell, tower, region]
+      caused_by:
+        - { concept: equipment_failure,          strength: strong,   time_lag: "immediate",
+            plain_english: "Faulty RRU or antenna reduces transmit power and coverage footprint" }
+        - { concept: power_outage,               strength: moderate, time_lag: "immediate",
+            plain_english: "Reduced power mode on battery backup lowers cell tx power" }
+        - { concept: parameter_misconfiguration, strength: moderate, time_lag: "immediate",
+            plain_english: "Antenna tilt/azimuth change shrinks or shifts coverage footprint" }
+      causes:
+        - { concept: call_drop_degradation, strength: strong, time_lag: "immediate",
+            plain_english: "RSRP below minimum threshold causes radio link failure" }
+        - { concept: handover_failure,      strength: strong, time_lag: "immediate",
+            plain_english: "Coverage gap between cells leaves UE with no handover target" }
+
+    - id: interference_degradation
+      display_name: "Interference Degradation"
+      synonyms: [interference, "co-channel interference", "SINR degradation", "pilot pollution"]
+      kpis:     [avg_sinr, interference_drop_rate, call_drop_rate]
+      entities: [cell, tower, region]
+      caused_by:
+        - { concept: external_interference,      strength: strong,   time_lag: "immediate",
+            plain_english: "External RF source raises noise floor, degrading SINR" }
+        - { concept: parameter_misconfiguration, strength: moderate, time_lag: "immediate",
+            plain_english: "Incorrect power settings create interference to neighbouring cells" }
+        - { concept: new_cell_activation,        strength: moderate, time_lag: "1-3 days",
+            plain_english: "New cell changes the interference environment in the cluster" }
+      causes:
+        - { concept: call_drop_degradation, strength: strong,   time_lag: "0-2 hours",
+            plain_english: "Low SINR degrades modulation to point of radio link failure" }
+        - { concept: handover_failure,      strength: moderate, time_lag: "immediate",
+            plain_english: "Low SINR triggers premature HO; target cell also affected" }
+
+    - id: parameter_misconfiguration
+      display_name: "Parameter Misconfiguration"
+      synonyms: [misconfiguration, "wrong parameters", "parameter error", "config issue", "neighbour list error"]
+      kpis:     [handover_success_rate, call_drop_rate, avg_sinr, ping_pong_rate]
+      entities: [cell, tower]
+      caused_by:
+        - { concept: parameter_change_event,  strength: strong,   time_lag: "immediate",
+            plain_english: "Incorrect radio parameter change applied to cell or cluster" }
+        - { concept: firmware_upgrade_event,  strength: moderate, time_lag: "immediate",
+            plain_english: "Firmware upgrade reset or altered parameter defaults" }
+        - { concept: new_cell_activation,     strength: moderate, time_lag: "1-3 days",
+            plain_english: "New cell activation requires neighbour list update that was missed" }
+      causes:
+        - { concept: handover_failure,         strength: strong,   time_lag: "immediate",
+            plain_english: "Incorrect HO thresholds or missing neighbour causes HO failure" }
+        - { concept: interference_degradation, strength: moderate, time_lag: "immediate",
+            plain_english: "Incorrect power settings create interference to neighbouring cells" }
+        - { concept: call_drop_degradation,    strength: moderate, time_lag: "immediate",
+            plain_english: "Misconfigured timer or threshold causes premature radio link release" }
+
+    - id: handover_failure
+      display_name: "Handover Failure"
+      synonyms: ["HO failure", "handoff failure", "mobility failure", "handover drop", "inter-cell failure"]
+      kpis:     [handover_success_rate, call_drop_rate, ping_pong_rate]
+      entities: [cell, tower]
+      caused_by:
+        - { concept: coverage_degradation,       strength: strong,   time_lag: "immediate",
+            plain_english: "Coverage gap between cells leaves UE with no handover target" }
+        - { concept: interference_degradation,   strength: moderate, time_lag: "immediate",
+            plain_english: "Low SINR triggers premature HO; target cell also affected" }
+        - { concept: parameter_misconfiguration, strength: strong,   time_lag: "immediate",
+            plain_english: "Incorrect HO thresholds or missing neighbour causes HO failure" }
+      causes:
+        - { concept: call_drop_degradation, strength: strong, time_lag: "immediate",
+            plain_english: "Failed HO leaves UE on degraded cell until radio link failure" }
+
+    - id: network_congestion
+      display_name: "Network Congestion"
+      synonyms: [congestion, "cell overload", "capacity exhaustion", "high load", "PRB saturation"]
+      kpis:     [prb_utilisation, congestion_rate, avg_throughput, call_drop_rate]
+      entities: [cell, tower, region]
+      caused_by:
+        - { concept: capacity_shortfall,   strength: strong, time_lag: "1-4 weeks",
+            plain_english: "Insufficient spectrum - demand permanently exceeds capacity" }
+        - { concept: traffic_surge_event,  strength: strong, time_lag: "immediate",
+            plain_english: "Sudden traffic surge exhausts radio resources on affected cells" }
+      causes:
+        - { concept: call_drop_degradation,    strength: moderate, time_lag: "0-1 hours",
+            plain_english: "Resource exhaustion forces scheduler to drop lowest-quality connections" }
+        - { concept: call_setup_success_rate,  strength: strong,   time_lag: "immediate",
+            plain_english: "No free resources - new call attempts are rejected" }
+
+
+    # ======================================================================
+    # TERMINAL CONCEPTS
+    # ======================================================================
+
+    - id: call_drop_degradation
+      display_name: "Call Drop Degradation"
+      synonyms: ["call drops", "CDR spike", "drop rate increase", "calls dropping",
+                 "why are calls dropping", "drops increased"]
+      kpis:     [call_drop_rate, radio_link_failure_rate, interference_drop_rate]
+      entities: [cell, tower, region]
+      caused_by:
+        - { concept: equipment_failure,          strength: strong,   time_lag: "immediate",
+            plain_english: "Failed hardware causes radio link loss or cell outage" }
+        - { concept: power_outage,               strength: strong,   time_lag: "immediate",
+            plain_english: "Cell goes offline during power loss - all active calls dropped" }
+        - { concept: coverage_degradation,       strength: strong,   time_lag: "immediate",
+            plain_english: "RSRP below minimum threshold causes radio link failure" }
+        - { concept: interference_degradation,   strength: strong,   time_lag: "0-2 hours",
+            plain_english: "Low SINR degrades modulation to point of radio link failure" }
+        - { concept: handover_failure,           strength: strong,   time_lag: "immediate",
+            plain_english: "Failed HO leaves UE on degraded cell until radio link failure" }
+        - { concept: network_congestion,         strength: moderate, time_lag: "0-1 hours",
+            plain_english: "Resource exhaustion forces scheduler to drop lowest-quality connections" }
+        - { concept: capacity_shortfall,         strength: moderate, time_lag: "1-4 weeks",
+            plain_english: "Persistent congestion from structural deficit continuously elevates CDR" }
+        - { concept: parameter_misconfiguration, strength: moderate, time_lag: "immediate",
+            plain_english: "Misconfigured timer or threshold causes premature radio link release" }
+        - { concept: software_fault,             strength: strong,   time_lag: "immediate",
+            plain_english: "Software crash causes cell reset or repeated UE disconnection" }
+      causes:
+        - { concept: subscriber_experience_degradation, strength: strong, time_lag: "same period",
+            plain_english: "Higher CDR means more subscribers experience dropped calls" }
+
+    - id: subscriber_experience_degradation
+      display_name: "Subscriber Experience Degradation"
+      synonyms: ["poor customer experience", "subscriber impact", "customer complaints",
+                 "service degradation", "why are customers complaining", "churn risk"]
+      kpis:     [subscriber_affected_rate, repeat_drop_rate, call_drop_rate]
+      entities: [subscriber, cell, region]
+      caused_by:
+        - { concept: call_drop_degradation, strength: strong, time_lag: "same period",
+            plain_english: "Higher CDR means more subscribers experience dropped calls" }
+      causes: []
+
+
+  # -- EVENT TYPES --
+  event_types:
+
+    # -- Equipment --
+    - id: rru_hardware_fault
+      display_name: "RRU Hardware Fault"
+      domain: equipment
+      severity_scale: high
+      typical_duration_days: 3
+      triggers_concepts: [equipment_failure, call_drop_degradation, coverage_degradation]
+
+    - id: bbu_fault
+      display_name: "BBU / Baseband Fault"
+      domain: equipment
+      severity_scale: critical
+      typical_duration_days: 1
+      triggers_concepts: [equipment_failure, call_drop_degradation]
+
+    - id: antenna_fault
+      display_name: "Antenna Fault / Feeder Problem"
+      domain: equipment
+      severity_scale: high
+      typical_duration_days: 5
+      triggers_concepts: [equipment_failure, coverage_degradation, call_drop_degradation]
+
+    - id: transport_fault
+      display_name: "Transmission / Backhaul Fault"
+      domain: equipment
+      severity_scale: critical
+      typical_duration_days: 2
+      triggers_concepts: [equipment_failure, call_drop_degradation]
+
+    - id: firmware_upgrade
+      display_name: "Firmware / Software Upgrade"
+      domain: equipment
+      severity_scale: medium
+      typical_duration_days: 1
+      triggers_concepts: [software_fault, call_drop_degradation, parameter_misconfiguration]
+
+    - id: software_fault_event
+      display_name: "Software / Firmware Defect"
+      domain: equipment
+      severity_scale: high
+      typical_duration_days: 14
+      triggers_concepts: [software_fault, call_drop_degradation, equipment_failure]
+
+    # -- Power --
+    - id: mains_power_failure
+      display_name: "Mains Power Failure"
+      domain: power
+      severity_scale: high
+      typical_duration_days: 1
+      triggers_concepts: [power_outage, call_drop_degradation, equipment_failure]
+
+    - id: generator_failure
+      display_name: "Generator / Battery Failure"
+      domain: power
+      severity_scale: critical
+      typical_duration_days: 1
+      triggers_concepts: [power_outage, equipment_failure, call_drop_degradation]
+
+    - id: power_theft
+      display_name: "Power Theft / Vandalism"
+      domain: power
+      severity_scale: high
+      typical_duration_days: 3
+      triggers_concepts: [power_outage, call_drop_degradation]
+
+    # -- Interference --
+    - id: co_channel_interference_event
+      display_name: "Co-Channel Interference"
+      domain: interference
+      severity_scale: medium
+      typical_duration_days: 7
+      triggers_concepts: [interference_degradation, call_drop_degradation]
+
+    - id: external_interference_event
+      display_name: "External Interference"
+      domain: interference
+      severity_scale: high
+      typical_duration_days: 30
+      triggers_concepts: [external_interference, interference_degradation, call_drop_degradation]
+
+    - id: pilot_pollution_event
+      display_name: "Pilot Pollution"
+      domain: interference
+      severity_scale: medium
+      typical_duration_days: 14
+      triggers_concepts: [interference_degradation, handover_failure, call_drop_degradation]
+
+    # -- Configuration --
+    - id: parameter_change
+      display_name: "Network Parameter Change"
+      domain: configuration
+      severity_scale: medium
+      typical_duration_days: 1
+      triggers_concepts: [parameter_misconfiguration, handover_failure, call_drop_degradation]
+
+    - id: neighbour_relation_error
+      display_name: "Neighbour Relation Error"
+      domain: configuration
+      severity_scale: medium
+      typical_duration_days: 7
+      triggers_concepts: [parameter_misconfiguration, handover_failure, call_drop_degradation]
+
+    - id: antenna_tilt_change
+      display_name: "Antenna Tilt / Azimuth Change"
+      domain: configuration
+      severity_scale: low
+      typical_duration_days: 1
+      triggers_concepts: [coverage_degradation, interference_degradation, handover_failure]
+
+    # -- Capacity --
+    - id: traffic_surge
+      display_name: "Traffic Surge"
+      domain: capacity
+      severity_scale: high
+      typical_duration_days: 1
+      triggers_concepts: [network_congestion, call_drop_degradation]
+
+    - id: new_cell_activation
+      display_name: "New Cell / Carrier Activation"
+      domain: capacity
+      severity_scale: low
+      typical_duration_days: 3
+      triggers_concepts: [interference_degradation, parameter_misconfiguration, handover_failure]
+
+    # -- Environmental --
+    - id: severe_weather
+      display_name: "Severe Weather"
+      domain: environmental
+      severity_scale: critical
+      typical_duration_days: 2
+      triggers_concepts: [power_outage, equipment_failure, coverage_degradation, call_drop_degradation]
+
+    - id: physical_obstruction
+      display_name: "Physical Obstruction"
+      domain: environmental
+      severity_scale: medium
+      typical_duration_days: 365
+      triggers_concepts: [coverage_degradation, call_drop_degradation]
+
+    # -- Operational --
+    - id: site_access_denied
+      display_name: "Site Access Denied"
+      domain: operational
+      severity_scale: medium
+      typical_duration_days: 30
+      triggers_concepts: [equipment_failure, call_drop_degradation]
+
+    - id: planned_maintenance
+      display_name: "Planned Maintenance"
+      domain: operational
+      severity_scale: low
+      typical_duration_days: 1
+      triggers_concepts: [call_drop_degradation]
+
+
+# ===========================================================================
+# SECTION 4 - SCHEMA MAPPING
+# ===========================================================================
+schema_mapping:
+
+  entity_mappings:
+    - { entity: cell,              bq_table: cells,            bq_pk: cell_id,       kg_label: KGCell }
+    - { entity: tower,             bq_table: towers,           bq_pk: tower_id,      kg_label: KGTower }
+    - { entity: network_cluster,   bq_table: network_clusters, bq_pk: cluster_id,    kg_label: KGCluster }
+    - { entity: region,            bq_table: regions,          bq_pk: region_id,     kg_label: KGRegion }
+    - { entity: subscriber,        bq_table: subscribers,      bq_pk: subscriber_id, kg_label: KGSubscriber }
+    - { entity: device,            bq_table: devices,          bq_pk: device_id,     kg_label: null }
+    - { entity: network_equipment, bq_table: null,             bq_pk: null,          kg_label: KGEquipment }
+
+  kpi_table_dependencies:
+    - { kpi: call_drop_rate,           primary: call_events,          joins: [] }
+    - { kpi: call_setup_success_rate,  primary: call_events,          joins: [] }
+    - { kpi: handover_success_rate,    primary: network_measurements, joins: [] }
+    - { kpi: radio_link_failure_rate,  primary: call_events,          joins: [] }
+    - { kpi: interference_drop_rate,   primary: call_events,          joins: [] }
+    - { kpi: avg_rsrp,                 primary: network_measurements, joins: [] }
+    - { kpi: avg_sinr,                 primary: network_measurements, joins: [] }
+    - { kpi: prb_utilisation,          primary: network_measurements, joins: [] }
+    - { kpi: avg_throughput,           primary: network_measurements, joins: [] }
+    - { kpi: congestion_rate,          primary: network_measurements, joins: [] }
+    - { kpi: network_availability,     primary: call_events,          joins: [] }
+    - { kpi: cdr_target_attainment,    primary: call_events,          joins: [network_kpi_targets] }
+    - { kpi: subscriber_affected_rate, primary: call_events,          joins: [subscribers] }
+    - { kpi: repeat_drop_rate,         primary: call_events,          joins: [subscribers] }
+    - { kpi: ping_pong_rate,           primary: handover_events,      joins: [] }
+    - { kpi: congestion_persistence,   primary: network_measurements, joins: [] }
+    - { kpi: capacity_vs_design,       primary: network_measurements, joins: [cells] }
+    - { kpi: cdr_spike_ratio,          primary: call_events,          joins: [] }
+    - { kpi: vendor_concentration,     primary: cells,                joins: [] }
+    - { kpi: outage_duration,          primary: call_events,          joins: [] }
+    - { kpi: churn_risk_concentration, primary: subscribers,          joins: [] }
+
+
+# ===========================================================================
+# SECTION 5 - EXAMPLES
+# ===========================================================================
+examples:
+
+  sql:
+
+    - id: lookup_kpi_global
+      category: LOOKUP
+      question: "What is the call drop rate this week?"
+      sql: |
+        SELECT
+          SAFE_DIVIDE(
+            COUNTIF(call_outcome = 'dropped'),
+            COUNTIF(call_outcome IN ('completed','dropped'))) * 100  AS cdr_pct,
+          COUNTIF(call_outcome IN ('completed','dropped'))           AS call_volume
+        FROM `${meta.bigquery.project}.${meta.bigquery.dataset}.call_events`
+        WHERE call_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+
+    - id: drilldown_by_cell
+      category: LOOKUP
+      question: "Break CDR by cell for a given region today"
+      sql: |
+        SELECT
+          ce.cell_id,
+          c.technology,
+          c.vendor,
+          SAFE_DIVIDE(
+            COUNTIF(ce.call_outcome = 'dropped'),
+            COUNTIF(ce.call_outcome IN ('completed','dropped'))) * 100   AS cdr_pct,
+          COUNTIF(ce.call_outcome IN ('completed','dropped'))            AS call_volume
+        FROM `${meta.bigquery.project}.${meta.bigquery.dataset}.call_events` ce
+        JOIN `${meta.bigquery.project}.${meta.bigquery.dataset}.cells` c
+          ON ce.cell_id = c.cell_id
+        JOIN `${meta.bigquery.project}.${meta.bigquery.dataset}.regions` r
+          ON ce.region_id = r.region_id
+        WHERE ce.call_date = CURRENT_DATE()
+          AND r.region_name = @region_name
+        GROUP BY ce.cell_id, c.technology, c.vendor
+        HAVING COUNTIF(ce.call_outcome IN ('completed','dropped')) >= 50
+        ORDER BY cdr_pct DESC
+
+    - id: driver_kpis_for_cell
+      category: LOOKUP
+      question: "Show all driver KPIs for a specific cell today"
+      sql: |
+        SELECT
+          ROUND(AVG(avg_rsrp_dbm), 1)                         AS avg_rsrp,
+          ROUND(AVG(avg_sinr_db), 1)                          AS avg_sinr,
+          ROUND(AVG(prb_utilisation_pct), 1)                  AS avg_prb,
+          ROUND(SAFE_DIVIDE(SUM(handover_success),
+                            SUM(handover_attempts)) * 100, 1) AS hosr,
+          ROUND(AVG(avg_throughput_mbps), 1)                  AS avg_throughput
+        FROM `${meta.bigquery.project}.${meta.bigquery.dataset}.network_measurements`
+        WHERE measurement_date = CURRENT_DATE()
+          AND cell_id = @cell_id
+
+    - id: period_compare
+      category: PERIOD_COMPARE
+      question: "How does this week's CDR compare to last week by technology?"
+      sql: |
+        SELECT
+          CASE
+            WHEN call_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) THEN 'this_week'
+            ELSE 'last_week'
+          END                                                             AS period,
+          technology,
+          SAFE_DIVIDE(
+            COUNTIF(call_outcome = 'dropped'),
+            COUNTIF(call_outcome IN ('completed','dropped'))) * 100       AS cdr_pct
+        FROM `${meta.bigquery.project}.${meta.bigquery.dataset}.call_events`
+        WHERE call_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+        GROUP BY period, technology
+        ORDER BY technology, period
+
+    - id: trend_daily
+      category: TREND
+      question: "Show CDR trend by day for a region over the last 30 days"
+      sql: |
+        SELECT
+          ce.call_date,
+          SAFE_DIVIDE(
+            COUNTIF(ce.call_outcome = 'dropped'),
+            COUNTIF(ce.call_outcome IN ('completed','dropped'))) * 100   AS cdr_pct
+        FROM `${meta.bigquery.project}.${meta.bigquery.dataset}.call_events` ce
+        JOIN `${meta.bigquery.project}.${meta.bigquery.dataset}.regions` r
+          ON ce.region_id = r.region_id
+        WHERE ce.call_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+          AND r.region_name = @region_name
+        GROUP BY ce.call_date
+        ORDER BY ce.call_date
+
+    - id: root_cause_drop_reason
+      category: ROOT_CAUSE
+      question: "What are the top drop reasons this week?"
+      sql: |
+        SELECT
+          drop_reason,
+          COUNT(*) AS drop_count,
+          SAFE_DIVIDE(COUNT(*), SUM(COUNT(*)) OVER ()) * 100 AS pct_of_drops
+        FROM `${meta.bigquery.project}.${meta.bigquery.dataset}.call_events`
+        WHERE call_outcome = 'dropped'
+          AND call_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+        GROUP BY drop_reason
+        ORDER BY drop_count DESC
+
+    - id: root_cause_drop_reason_by_region
+      category: ROOT_CAUSE
+      question: "What are the top drop reasons in a specific region?"
+      sql: |
+        SELECT
+          ce.drop_reason,
+          COUNT(*) AS drop_count,
+          SAFE_DIVIDE(COUNT(*), SUM(COUNT(*)) OVER ()) * 100 AS pct_of_drops
+        FROM `${meta.bigquery.project}.${meta.bigquery.dataset}.call_events` ce
+        JOIN `${meta.bigquery.project}.${meta.bigquery.dataset}.regions` r
+          ON ce.region_id = r.region_id
+        WHERE ce.call_outcome = 'dropped'
+          AND r.region_name = @region_name
+          AND ce.call_date BETWEEN @start_date AND @end_date
+        GROUP BY ce.drop_reason
+        ORDER BY drop_count DESC
+
+    - id: entity_compare
+      category: ENTITY_COMPARE
+      question: "Compare CDR between two regions over the last 30 days"
+      sql: |
+        SELECT
+          r.region_name,
+          r.region_type,
+          SAFE_DIVIDE(
+            COUNTIF(ce.call_outcome = 'dropped'),
+            COUNTIF(ce.call_outcome IN ('completed','dropped'))) * 100   AS cdr_pct,
+          SAFE_DIVIDE(
+            COUNTIF(ce.call_outcome IN ('completed','dropped')),
+            COUNT(*)) * 100                                              AS cssr_pct,
+          COUNT(*)                                                       AS total_attempts
+        FROM `${meta.bigquery.project}.${meta.bigquery.dataset}.call_events` ce
+        JOIN `${meta.bigquery.project}.${meta.bigquery.dataset}.regions` r
+          ON ce.region_id = r.region_id
+        WHERE ce.call_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+          AND r.region_name IN (@region_a, @region_b)
+        GROUP BY r.region_name, r.region_type
+
+    - id: subscriber_impact
+      category: SEGMENT_COMPARE
+      question: "What share of subscribers experienced a drop today by segment?"
+      sql: |
+        SELECT
+          s.segment,
+          s.loyalty_tier,
+          COUNT(DISTINCT ce.subscriber_id)                                 AS total_subs,
+          COUNT(DISTINCT CASE WHEN ce.call_outcome = 'dropped'
+                              THEN ce.subscriber_id END)                   AS affected_subs,
+          SAFE_DIVIDE(
+            COUNT(DISTINCT CASE WHEN ce.call_outcome = 'dropped'
+                                THEN ce.subscriber_id END),
+            COUNT(DISTINCT ce.subscriber_id)) * 100                        AS affected_pct,
+          ROUND(AVG(s.churn_risk_score), 3)                                AS avg_churn_risk
+        FROM `${meta.bigquery.project}.${meta.bigquery.dataset}.call_events` ce
+        JOIN `${meta.bigquery.project}.${meta.bigquery.dataset}.subscribers` s
+          ON ce.subscriber_id = s.subscriber_id
+        WHERE ce.call_date = CURRENT_DATE()
+        GROUP BY s.segment, s.loyalty_tier
+        ORDER BY affected_pct DESC
+
+    - id: cdr_target_attainment
+      category: LOOKUP
+      question: "Which regions are breaching their CDR targets this month?"
+      sql: |
+        SELECT
+          r.region_name,
+          t.technology,
+          ROUND(SAFE_DIVIDE(
+            COUNTIF(ce.call_outcome = 'dropped'),
+            COUNTIF(ce.call_outcome IN ('completed','dropped'))) * 100, 2) AS actual_cdr,
+          MAX(t.target_cdr)                                                 AS target_cdr,
+          SAFE_DIVIDE(
+            SAFE_DIVIDE(COUNTIF(ce.call_outcome = 'dropped'),
+                        COUNTIF(ce.call_outcome IN ('completed','dropped'))) * 100,
+            MAX(t.target_cdr))                                              AS attainment_ratio
+        FROM `${meta.bigquery.project}.${meta.bigquery.dataset}.call_events` ce
+        JOIN `${meta.bigquery.project}.${meta.bigquery.dataset}.regions` r
+          ON ce.region_id = r.region_id
+        JOIN `${meta.bigquery.project}.${meta.bigquery.dataset}.network_kpi_targets` t
+          ON r.region_id = t.region_id
+         AND ce.technology = t.technology
+         AND FORMAT_DATE('%Y-%m', ce.call_date) = FORMAT_DATE('%Y-%m', t.target_month)
+        WHERE t.target_month = DATE_TRUNC(CURRENT_DATE(), MONTH)
+        GROUP BY r.region_name, t.technology
+        HAVING attainment_ratio > 1.0
+        ORDER BY attainment_ratio DESC
+
+
+  cypher:
+
+    - id: active_events_broad_scan
+      intent: "All active events on offender cell, tower and cluster"
+      cypher: |
+        MATCH (c:KGCell {cell_id: $cell_id})
+        OPTIONAL MATCH (c)-[:IMPACTED_BY]->(cev:KGEvent {is_resolved:false})
+        OPTIONAL MATCH (c)<-[:HAS_CELL]-(t:KGTower)
+                        -[:IMPACTED_BY]->(tev:KGEvent {is_resolved:false})
+        OPTIONAL MATCH (t)-[:PART_OF_CLUSTER]->(cl:KGCluster)
+                        -[:IMPACTED_BY]->(clev:KGEvent {is_resolved:false})
+        RETURN
+          collect(DISTINCT {type:cev.event_type, severity:cev.severity,
+                            since:cev.start_date, scope:'cell'})     AS cell_events,
+          collect(DISTINCT {type:tev.event_type, severity:tev.severity,
+                            since:tev.start_date, scope:'tower'})    AS tower_events,
+          collect(DISTINCT {type:clev.event_type, severity:clev.severity,
+                            since:clev.start_date, scope:'cluster'}) AS cluster_events
+
+    - id: interference_structural_check
+      intent: "Check active INTERFERES_WITH edges on offender cell"
+      cypher: |
+        MATCH (c:KGCell {cell_id: $cell_id})
+              <-[i:INTERFERES_WITH]-(src:KGCell)
+        WHERE i.is_active = true
+        RETURN src.cell_id,
+               src.technology,
+               src.band_mhz,
+               i.interference_type,
+               i.interference_db
+        ORDER BY i.interference_db DESC
+
+    - id: neighbour_gap_check
+      intent: "Count active neighbours to detect NRT gaps"
+      cypher: |
+        MATCH (c:KGCell {cell_id: $cell_id})
+        OPTIONAL MATCH (c)-[n:NEIGHBOURS]->(nbr:KGCell)
+          WHERE n.is_active_neighbour = true
+            AND nbr.technology = c.technology
+        RETURN c.cell_id,
+               count(nbr)           AS active_neighbour_count,
+               collect(nbr.cell_id) AS neighbours
+
+    - id: tower_full_impact_chain
+      intent: "Full equipment, cell and event chain for a tower"
+      cypher: |
+        MATCH (t:KGTower {tower_name: $tower_name})
+              -[:HAS_CELL]->(c:KGCell)
+        OPTIONAL MATCH (c)-[:EQUIPPED_WITH]->(eq:KGEquipment)
+        OPTIONAL MATCH (c)-[:IMPACTED_BY]->(cev:KGEvent {is_resolved:false})
+        OPTIONAL MATCH (t)-[:IMPACTED_BY]->(tev:KGEvent {is_resolved:false})
+        RETURN t.tower_name                       AS tower,
+               c.cell_id                           AS cell,
+               c.technology                        AS tech,
+               collect(DISTINCT eq.equipment_type) AS equipment,
+               collect(DISTINCT cev.event_type)    AS cell_events,
+               collect(DISTINCT tev.event_type)    AS tower_events
+
+    - id: cluster_risk_scan
+      intent: "Scan all towers and cells in a cluster for active events"
+      cypher: |
+        MATCH (cl:KGCluster {cluster_name: $cluster_name})
+              <-[:PART_OF_CLUSTER]-(t:KGTower)
+              -[:HAS_CELL]->(c:KGCell)
+        OPTIONAL MATCH (c)-[:IMPACTED_BY]->(cev:KGEvent {is_resolved:false})
+        OPTIONAL MATCH (t)-[:IMPACTED_BY]->(tev:KGEvent {is_resolved:false})
+        RETURN t.tower_name                       AS tower,
+               c.cell_id                           AS cell,
+               c.technology                        AS tech,
+               collect(DISTINCT cev.event_type)    AS cell_events,
+               collect(DISTINCT tev.event_type)    AS tower_events
+        ORDER BY t.tower_name, c.technology
+
+    - id: high_risk_subscriber_cells
+      intent: "Cells serving high-churn-risk subscribers with active events"
+      cypher: |
+        MATCH (sub:KGSubscriber)-[:SERVED_BY]->(c:KGCell)
+        WHERE sub.churn_risk_score >= 0.6
+        OPTIONAL MATCH (c)-[:IMPACTED_BY]->(ev:KGEvent {is_resolved:false})
+        RETURN c.cell_id,
+               c.technology,
+               count(sub)                      AS high_risk_subs,
+               avg(sub.churn_risk_score)        AS avg_churn_risk,
+               collect(DISTINCT ev.event_type)  AS active_events
+        ORDER BY high_risk_subs DESC
+        LIMIT 10
+
+    - id: causal_chain_trace
+      intent: "Trace full causal chain from a KGEvent to downstream concepts"
+      cypher: |
+        MATCH (ev:KGEvent {event_id: $event_id})
+              -[:EVENT_INSTANCE_OF]->(oe:OntEvent)
+              -[:TRIGGERS]->(c1:OntConcept)
+        OPTIONAL MATCH (c1)-[:CAUSES*1..4]->(c2:OntConcept)
+        RETURN oe.event_type_id                  AS event_type,
+               collect(DISTINCT c1.concept_id)   AS directly_triggered,
+               collect(DISTINCT c2.concept_id)   AS downstream_concepts
+
+    - id: nlu_concept_match
+      intent: "Match user query to concept via synonyms (NLU step)"
+      cypher: |
+        MATCH (c:OntConcept)
+        WHERE any(s IN c.synonyms WHERE toLower(s) CONTAINS toLower($query))
+        RETURN c.concept_id, c.display_name
+        ORDER BY c.concept_id
+        LIMIT 5

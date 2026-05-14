@@ -1,0 +1,898 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# ONTOLOGY CONFIGURATION - RETAIL ANALYTICS
+# ═══════════════════════════════════════════════════════════════════════════
+# Validated against actual BigQuery schema from create_mock_data.py
+# ═══════════════════════════════════════════════════════════════════════════
+
+meta:
+  name: "Retail Analytics"
+  version: "1.0"
+  description: "Semantic layer for retail sales analysis"
+  bigquery_project: "acn-uki-ds-data-ai-project"
+  bigquery_dataset: "customer_sales_data_ai_agentic_semantic_layer"
+  auto_discover_schema: true
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TABLES - Matches actual BigQuery schema
+# ═══════════════════════════════════════════════════════════════════════════
+tables:
+  - name: orders
+    fqn: "${bigquery_project}.${bigquery_dataset}.orders"
+    description: "Customer orders with revenue and dates"
+    columns:
+      - name: order_id
+        type: STRING
+        is_pk: true
+        description: "Unique order ID"
+      - name: customer_id
+        type: STRING
+        description: "FK to customers"
+      - name: store_id
+        type: STRING
+        description: "FK to stores"
+      - name: order_date
+        type: DATE
+        description: "Date placed"
+      - name: order_total
+        type: FLOAT64
+        description: "Total value USD"
+      - name: status
+        type: STRING
+        description: "completed, pending, cancelled, refunded"
+      - name: promo_id
+        type: STRING
+        description: "FK to promotions (null if none)"
+      - name: channel
+        type: STRING
+        description: "online, in_store"
+
+  - name: order_items
+    fqn: "${bigquery_project}.${bigquery_dataset}.order_items"
+    description: "Line items within each order"
+    columns:
+      - name: item_id
+        type: STRING
+        is_pk: true
+        description: "Unique line item ID"
+      - name: order_id
+        type: STRING
+        description: "FK to orders"
+      - name: product_id
+        type: STRING
+        description: "FK to products"
+      - name: quantity
+        type: INT64
+        description: "Units"
+      - name: unit_price
+        type: FLOAT64
+        description: "Actual price charged"
+      - name: discount_amount
+        type: FLOAT64
+        description: "Discount in USD"
+      - name: line_total
+        type: FLOAT64
+        description: "Net line total"
+
+  - name: products
+    fqn: "${bigquery_project}.${bigquery_dataset}.products"
+    description: "Product catalog"
+    columns:
+      - name: product_id
+        type: STRING
+        is_pk: true
+        description: "Unique product ID"
+      - name: product_name
+        type: STRING
+        description: "Display name"
+      - name: category
+        type: STRING
+        description: "Product category"
+      - name: subcategory
+        type: STRING
+        description: "Subcategory"
+      - name: brand
+        type: STRING
+        description: "Brand name"
+      - name: list_price
+        type: FLOAT64
+        description: "List price USD"
+      - name: cost
+        type: FLOAT64
+        description: "Unit cost USD"
+      - name: launch_date
+        type: DATE
+        description: "Product launch date"
+      - name: is_discontinued
+        type: BOOL
+        description: "No longer sold"
+      - name: lifecycle_stage
+        type: STRING
+        description: "new, growth, mature, decline"
+
+  - name: customers
+    fqn: "${bigquery_project}.${bigquery_dataset}.customers"
+    description: "Customer master data"
+    columns:
+      - name: customer_id
+        type: STRING
+        is_pk: true
+        description: "Unique customer ID"
+      - name: name
+        type: STRING
+        description: "Full name"
+      - name: email
+        type: STRING
+        description: "Email"
+      - name: segment
+        type: STRING
+        description: "enterprise, mid-market, smb"
+      - name: acquisition_channel
+        type: STRING
+        description: "How acquired"
+      - name: loyalty_tier
+        type: STRING
+        description: "bronze, silver, gold, platinum"
+      - name: created_at
+        type: TIMESTAMP
+        description: "Account creation"
+      - name: country
+        type: STRING
+        description: "ISO country code"
+      - name: preferred_store_id
+        type: STRING
+        description: "FK to stores"
+      - name: lifetime_value
+        type: FLOAT64
+        description: "Predicted LTV"
+      - name: is_active
+        type: BOOL
+        description: "Active flag"
+
+  - name: stores
+    fqn: "${bigquery_project}.${bigquery_dataset}.stores"
+    description: "Store locations"
+    columns:
+      - name: store_id
+        type: STRING
+        is_pk: true
+        description: "Unique store identifier"
+      - name: store_name
+        type: STRING
+        description: "Store display name"
+      - name: region
+        type: STRING
+        description: "Geographic region"
+      - name: city
+        type: STRING
+        description: "City"
+      - name: store_type
+        type: STRING
+        description: "flagship, standard, outlet, online"
+      - name: opened_date
+        type: DATE
+        description: "When the store opened"
+      - name: capacity_sqft
+        type: INT64
+        description: "Floor space in sqft"
+      - name: manager_name
+        type: STRING
+        description: "Store manager"
+      - name: is_active
+        type: BOOL
+        description: "Currently operating"
+
+  - name: promotions
+    fqn: "${bigquery_project}.${bigquery_dataset}.promotions"
+    description: "Marketing promotions and campaigns"
+    columns:
+      - name: promo_id
+        type: STRING
+        is_pk: true
+        description: "Unique promotion ID"
+      - name: promo_name
+        type: STRING
+        description: "Promotion name"
+      - name: promo_type
+        type: STRING
+        description: "discount, bogo, bundle, clearance"
+      - name: discount_pct
+        type: FLOAT64
+        description: "Discount percentage"
+      - name: start_date
+        type: DATE
+        description: "Promotion start"
+      - name: end_date
+        type: DATE
+        description: "Promotion end"
+      - name: target_category
+        type: STRING
+        description: "Which category (null=all)"
+      - name: target_region
+        type: STRING
+        description: "Which region (null=all)"
+      - name: budget_usd
+        type: FLOAT64
+        description: "Marketing spend"
+      - name: is_active
+        type: BOOL
+        description: "Currently running"
+
+  - name: web_events
+    fqn: "${bigquery_project}.${bigquery_dataset}.web_events"
+    description: "Website/app user events"
+    columns:
+      - name: event_id
+        type: STRING
+        is_pk: true
+        description: "Unique event ID"
+      - name: customer_id
+        type: STRING
+        description: "FK to customers (null=anonymous)"
+      - name: session_id
+        type: STRING
+        description: "Session ID"
+      - name: event_type
+        type: STRING
+        description: "page_view, click, add_to_cart, purchase, signup"
+      - name: page_url
+        type: STRING
+        description: "Page URL"
+      - name: event_timestamp
+        type: TIMESTAMP
+        description: "When event occurred"
+      - name: utm_source
+        type: STRING
+        description: "UTM source"
+      - name: utm_campaign
+        type: STRING
+        description: "UTM campaign"
+      - name: device_type
+        type: STRING
+        description: "desktop, mobile, tablet"
+      - name: referrer_domain
+        type: STRING
+        description: "Referring domain"
+
+  - name: sales_targets
+    fqn: "${bigquery_project}.${bigquery_dataset}.sales_targets"
+    description: "Monthly sales targets by store and category"
+    columns:
+      - name: target_id
+        type: STRING
+        is_pk: true
+        description: "Unique target ID"
+      - name: store_id
+        type: STRING
+        description: "FK to stores"
+      - name: category
+        type: STRING
+        description: "Product category"
+      - name: target_month
+        type: DATE
+        description: "First day of target month"
+      - name: target_revenue
+        type: FLOAT64
+        description: "Revenue target USD"
+      - name: target_units
+        type: INT64
+        description: "Unit sales target"
+
+  - name: promotion_products
+    fqn: "${bigquery_project}.${bigquery_dataset}.promotion_products"
+    description: "Bridge table linking promotions to products/categories"
+    columns:
+      - name: promo_product_id
+        type: STRING
+        is_pk: true
+        description: "Unique bridge row ID"
+      - name: promo_id
+        type: STRING
+        description: "FK to promotions"
+      - name: product_id
+        type: STRING
+        description: "FK to products (null if category-level)"
+      - name: category
+        type: STRING
+        description: "Target category"
+      - name: subcategory
+        type: STRING
+        description: "Target subcategory (null if category-level)"
+      - name: scope
+        type: STRING
+        description: "category or product"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# JOINS - Relationships between tables
+# ═══════════════════════════════════════════════════════════════════════════
+joins:
+  - from: orders
+    to: order_items
+    type: "ONE_TO_MANY"
+    condition: "orders.order_id = order_items.order_id"
+    
+  - from: order_items
+    to: products
+    type: "MANY_TO_ONE"
+    condition: "order_items.product_id = products.product_id"
+    
+  - from: orders
+    to: customers
+    type: "MANY_TO_ONE"
+    condition: "orders.customer_id = customers.customer_id"
+    
+  - from: orders
+    to: stores
+    type: "MANY_TO_ONE"
+    condition: "orders.store_id = stores.store_id"
+
+  - from: orders
+    to: promotions
+    type: "MANY_TO_ONE"
+    condition: "orders.promo_id = promotions.promo_id"
+
+  - from: customers
+    to: web_events
+    type: "ONE_TO_MANY"
+    condition: "customers.customer_id = web_events.customer_id"
+
+  - from: stores
+    to: sales_targets
+    type: "ONE_TO_MANY"
+    condition: "stores.store_id = sales_targets.store_id"
+
+  - from: promotions
+    to: promotion_products
+    type: "ONE_TO_MANY"
+    condition: "promotions.promo_id = promotion_products.promo_id"
+
+  - from: products
+    to: promotion_products
+    type: "ONE_TO_MANY"
+    condition: "products.product_id = promotion_products.product_id"
+
+  - from: sales_targets
+    to: products
+    type: "MANY_TO_MANY"
+    condition: "sales_targets.category = products.category"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# FOREIGN KEYS
+# ═══════════════════════════════════════════════════════════════════════════
+foreign_keys:
+  - from: "${bigquery_project}.${bigquery_dataset}.orders.customer_id"
+    to: "${bigquery_project}.${bigquery_dataset}.customers.customer_id"
+  - from: "${bigquery_project}.${bigquery_dataset}.orders.store_id"
+    to: "${bigquery_project}.${bigquery_dataset}.stores.store_id"
+  - from: "${bigquery_project}.${bigquery_dataset}.orders.promo_id"
+    to: "${bigquery_project}.${bigquery_dataset}.promotions.promo_id"
+  - from: "${bigquery_project}.${bigquery_dataset}.order_items.order_id"
+    to: "${bigquery_project}.${bigquery_dataset}.orders.order_id"
+  - from: "${bigquery_project}.${bigquery_dataset}.order_items.product_id"
+    to: "${bigquery_project}.${bigquery_dataset}.products.product_id"
+  - from: "${bigquery_project}.${bigquery_dataset}.web_events.customer_id"
+    to: "${bigquery_project}.${bigquery_dataset}.customers.customer_id"
+  - from: "${bigquery_project}.${bigquery_dataset}.sales_targets.store_id"
+    to: "${bigquery_project}.${bigquery_dataset}.stores.store_id"
+  - from: "${bigquery_project}.${bigquery_dataset}.promotion_products.promo_id"
+    to: "${bigquery_project}.${bigquery_dataset}.promotions.promo_id"
+  - from: "${bigquery_project}.${bigquery_dataset}.promotion_products.product_id"
+    to: "${bigquery_project}.${bigquery_dataset}.products.product_id"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# KPIs - Metrics with formulas and thresholds
+# ═══════════════════════════════════════════════════════════════════════════
+kpis:
+  - name: revenue
+    expression: "SUM(CASE WHEN status='completed' THEN order_total ELSE 0 END)"
+    description: "Total revenue from completed orders"
+    grain: monthly
+    tables: [orders]
+    dimensions: [store, category, region, channel, segment]
+    thresholds:
+      green: ">= 500000"
+      amber: ">= 300000"
+      red: "< 300000"
+
+  - name: order_count
+    expression: "COUNTIF(status='completed')"
+    description: "Number of completed orders"
+    grain: monthly
+    tables: [orders]
+    dimensions: [store, category, region, channel]
+    thresholds:
+      green: ">= 3000"
+      amber: ">= 1500"
+      red: "< 1500"
+
+  - name: aov
+    expression: "SAFE_DIVIDE(SUM(CASE WHEN status='completed' THEN order_total END), COUNTIF(status='completed'))"
+    description: "Average order value"
+    grain: monthly
+    tables: [orders]
+    dimensions: [store, category, segment, channel]
+    thresholds:
+      green: ">= 200"
+      amber: ">= 150"
+      red: "< 150"
+
+  - name: traffic
+    expression: "COUNTIF(event_type='page_view')"
+    description: "Total page views (proxy for foot traffic + web)"
+    tables: [web_events]
+    dimensions: [store, utm_source, device_type]
+
+  - name: conversion_rate
+    expression: "SAFE_DIVIDE(COUNTIF(event_type='purchase'), COUNT(DISTINCT session_id))"
+    description: "Session to purchase conversion rate"
+    tables: [web_events]
+    dimensions: [utm_source, device_type, utm_campaign]
+    thresholds:
+      green: ">= 0.03"
+      amber: ">= 0.01"
+      red: "< 0.01"
+
+  - name: product_mix_index
+    expression: "SAFE_DIVIDE(SUM(CASE WHEN p.category='Electronics' THEN oi.line_total END), SUM(oi.line_total))"
+    description: "Share of revenue from Electronics"
+    tables: [order_items, products]
+    dimensions: [store, brand]
+
+  - name: discount_rate
+    expression: "SAFE_DIVIDE(SUM(discount_amount), SUM(line_total + discount_amount))"
+    description: "Average discount as percentage of gross revenue"
+    tables: [order_items]
+    dimensions: [store, category, promo_type]
+    thresholds:
+      green: "< 0.10"
+      amber: "< 0.20"
+      red: ">= 0.20"
+
+  - name: gross_margin
+    expression: "SAFE_DIVIDE(SUM(oi.line_total - (p.cost * oi.quantity)), SUM(oi.line_total))"
+    description: "Gross margin percentage"
+    tables: [order_items, products]
+    dimensions: [category, brand, subcategory, store]
+    thresholds:
+      green: ">= 0.40"
+      amber: ">= 0.25"
+      red: "< 0.25"
+
+  - name: cancellation_rate
+    expression: "SAFE_DIVIDE(COUNTIF(status='cancelled'), COUNT(*))"
+    description: "Percentage of cancelled orders"
+    tables: [orders]
+    dimensions: [store, region, channel]
+    thresholds:
+      green: "< 0.05"
+      amber: "< 0.10"
+      red: ">= 0.10"
+
+  - name: customer_churn_rate
+    expression: "SAFE_DIVIDE(COUNTIF(is_active = false), COUNT(*))"
+    description: "Percentage of inactive customers"
+    tables: [customers]
+    dimensions: [segment, loyalty_tier, acquisition_channel]
+    thresholds:
+      green: "< 0.10"
+      amber: "< 0.20"
+      red: ">= 0.20"
+
+  - name: target_attainment
+    expression: "SAFE_DIVIDE(SUM(CASE WHEN o.status='completed' THEN o.order_total ELSE 0 END), SUM(st.target_revenue))"
+    description: "Actual completed revenue vs target revenue"
+    tables: [sales_targets, orders, stores]
+    dimensions: [store, category]
+    thresholds:
+      green: ">= 0.90"
+      amber: ">= 0.75"
+      red: "< 0.75"
+
+  - name: promo_roi
+    expression: "SAFE_DIVIDE(SUM(orders.order_total) - MAX(promotions.budget_usd), MAX(promotions.budget_usd))"
+    description: "Promotion ROI"
+    tables: [orders, promotions]
+    dimensions: [promo_type, target_category, target_region]
+
+  - name: stockout_rate
+    expression: "SAFE_DIVIDE(COUNT(DISTINCT CASE WHEN p.category = 'Electronics' AND p.brand IN ('TechPro','SwiftGear') THEN oi.item_id END), COUNT(DISTINCT oi.item_id))"
+    description: "Share of order items from affected Electronics brands"
+    tables: [order_items, products]
+    dimensions: [category, brand, store]
+    thresholds:
+      green: ">= 0.10"
+      amber: ">= 0.05"
+      red: "< 0.05"
+
+  - name: loyalty_redemption_rate
+    expression: "SAFE_DIVIDE(COUNTIF(c.loyalty_tier IN ('gold','platinum') AND o.promo_id IS NOT NULL), COUNT(*))"
+    description: "Rate of promo-linked purchases by gold/platinum loyalty members"
+    tables: [orders, customers]
+    dimensions: [loyalty_tier, store]
+
+# ═══════════════════════════════════════════════════════════════════════════
+# KPI DRIVER TREE - What drives what
+# ═══════════════════════════════════════════════════════════════════════════
+kpi_driver_tree:
+  - parent: revenue
+    child: order_count
+  - parent: revenue
+    child: aov
+  - parent: order_count
+    child: traffic
+  - parent: order_count
+    child: conversion_rate
+  - parent: aov
+    child: product_mix_index
+  - parent: aov
+    child: discount_rate
+  - parent: gross_margin
+    child: product_mix_index
+  - parent: gross_margin
+    child: discount_rate
+  - parent: stockout_rate
+    child: order_count
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TAXONOMY - Product categories, subcategories, brands
+# ═══════════════════════════════════════════════════════════════════════════
+taxonomy:
+  categories:
+    - name: Electronics
+      subcategories: [Laptops, Smartphones, Tablets, Headphones, Monitors]
+      brands:
+        - name: TechPro
+          tier: premium
+        - name: ValueLine
+          tier: budget
+        - name: SwiftGear
+          tier: mid
+    
+    - name: Software
+      subcategories: [Productivity, Security, Design, Analytics, Cloud]
+      brands:
+        - name: TechPro
+          tier: premium
+        - name: EcoSmart
+          tier: mid
+        - name: ValueLine
+          tier: budget
+    
+    - name: Services
+      subcategories: [Consulting, Training, Support, Implementation, Managed]
+      brands:
+        - name: PremiumPlus
+          tier: premium
+        - name: TechPro
+          tier: mid
+    
+    - name: Accessories
+      subcategories: [Cases, Cables, Chargers, Stands, Adapters]
+      brands:
+        - name: SwiftGear
+          tier: mid
+        - name: ValueLine
+          tier: budget
+        - name: EcoSmart
+          tier: budget
+  
+  competes_with:
+    - a: Cables
+      b: Chargers
+    - a: Analytics
+      b: Cloud
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CONCEPTS - Business concepts for causal reasoning
+# ═══════════════════════════════════════════════════════════════════════════
+concepts:
+  - name: revenue decline
+    description: "Decrease in total sales revenue vs prior period"
+    synonyms: [sales drop, revenue decrease, lower sales, declining revenue]
+    maps_to_tables: [orders, order_items, stores, promotions]
+    maps_to_kpis: [revenue, aov, order_count]
+    calculation_hint: "Compare SUM(order_total) WHERE status='completed' between periods"
+
+  - name: promotion impact
+    description: "How promotions drive revenue"
+    synonyms: [promo impact, campaign effectiveness, Black Friday, marketing ROI]
+    maps_to_tables: [promotions, promotion_products, orders, order_items]
+    maps_to_kpis: [revenue, promo_roi, aov, discount_rate]
+    calculation_hint: "Join orders with promotions on promo_id"
+
+  - name: customer churn
+    description: "Rate at which customers become inactive"
+    synonyms: [attrition, customer loss, retention, inactive customers]
+    maps_to_tables: [customers, orders]
+    maps_to_kpis: [customer_churn_rate, revenue]
+    calculation_hint: "COUNTIF(is_active=false) / COUNT(*)"
+
+  - name: store performance
+    description: "How well a store/region performs vs targets"
+    synonyms: [store sales, location performance, regional]
+    maps_to_tables: [stores, orders, sales_targets]
+    maps_to_kpis: [revenue, target_attainment, order_count, traffic]
+    calculation_hint: "Join orders with stores on store_id"
+
+  - name: product performance
+    description: "How products/categories sell relative to prior periods"
+    synonyms: [product sales, category decline, best sellers]
+    maps_to_tables: [products, order_items, orders]
+    maps_to_kpis: [revenue, gross_margin, stockout_rate]
+    calculation_hint: "Join order_items with products on product_id"
+
+  - name: supply chain disruption
+    description: "Supply chain issues causing stockouts"
+    synonyms: [stockout, supply issue, inventory, out of stock]
+    maps_to_tables: [products, order_items]
+    maps_to_kpis: [stockout_rate, revenue, order_count]
+    calculation_hint: "Check products with low order_items in recent period"
+
+  - name: pricing and margin
+    description: "How pricing decisions affect margin"
+    synonyms: [margin decline, pricing, discount]
+    maps_to_tables: [products, order_items, orders]
+    maps_to_kpis: [gross_margin, revenue, aov, discount_rate]
+    calculation_hint: "Compare margin = (line_total - cost*qty) / line_total"
+
+  - name: loyalty program effect
+    description: "How loyalty program affects behavior"
+    synonyms: [loyalty, redemption, points, rewards]
+    maps_to_tables: [customers, orders]
+    maps_to_kpis: [loyalty_redemption_rate, revenue, aov]
+    calculation_hint: "Track promo usage by loyalty_tier over time"
+
+  - name: channel mix shift
+    description: "Distribution shifts between online and in-store"
+    synonyms: [online vs in-store, channel shift, digital]
+    maps_to_tables: [orders, web_events]
+    maps_to_kpis: [revenue, aov, conversion_rate]
+    calculation_hint: "Group orders by channel"
+
+  - name: seasonality
+    description: "Cyclical patterns"
+    synonyms: [seasonal, holiday, Q4, Black Friday, summer]
+    maps_to_tables: [orders, promotions]
+    maps_to_kpis: [revenue, order_count, traffic]
+    calculation_hint: "Group by month/quarter"
+
+  - name: competitive pressure
+    description: "External competitive actions"
+    synonyms: [competitor, competitive, market share, price war]
+    maps_to_tables: [orders, stores]
+    maps_to_kpis: [revenue, traffic, conversion_rate, gross_margin]
+    calculation_hint: "Compare store performance before/after competitor actions"
+
+  - name: customer relationship changes
+    description: "Changes in customer-business relationship"
+    synonyms: [account manager, contract renewal, SLA]
+    maps_to_tables: [customers, orders]
+    maps_to_kpis: [customer_churn_rate, revenue]
+    calculation_hint: "Check churn rate by segment before/after events"
+
+  - name: loyalty program changes
+    description: "Modifications to loyalty program rules"
+    synonyms: [points ratio, tier change, redemption rule]
+    maps_to_tables: [orders, customers]
+    maps_to_kpis: [loyalty_redemption_rate, aov, revenue]
+    calculation_hint: "Compare redemption rate before vs after rule changes"
+
+  - name: revenue decline
+    description: "Decrease in total revenue compared to prior period"
+    synonyms: [sales drop, lower sales, declining revenue]
+    maps_to_tables: [orders, order_items, stores]
+    maps_to_kpis: [revenue, aov, order_count]
+
+  - name: supply chain disruption
+    description: "Disruption in product supply affecting availability"
+    synonyms: [stock shortage, inventory issues, supply problems]
+    maps_to_tables: [products, order_items]
+    maps_to_kpis: [revenue]
+
+  - name: competitive pressure
+    description: "Competitive actions affecting market share"
+    synonyms: [competition, market pressure, competitor impact]
+    maps_to_tables: [orders, customers]
+    maps_to_kpis: [revenue, customer_churn_rate]
+
+  - name: customer churn
+    description: "Customers becoming inactive or leaving"
+    synonyms: [attrition, customer loss, lapsed customers]
+    maps_to_tables: [customers, orders]
+    maps_to_kpis: [customer_churn_rate, revenue]  
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CAUSAL EDGES - What affects what
+# ═══════════════════════════════════════════════════════════════════════════
+affects_edges:
+  - from: promotion impact
+    to: revenue decline
+    mechanism: "Fewer/weaker promotions reduce revenue"
+  - from: promotion impact
+    to: pricing and margin
+    mechanism: "Promo discounts compress margin"
+  - from: customer churn
+    to: revenue decline
+    mechanism: "Churned customers stop purchasing"
+  - from: supply chain disruption
+    to: product performance
+    mechanism: "Stockouts prevent sales"
+  - from: supply chain disruption
+    to: revenue decline
+    mechanism: "Missing inventory = lost revenue"
+  - from: competitive pressure
+    to: revenue decline
+    mechanism: "Competitor actions divert customers"
+  - from: competitive pressure
+    to: store performance
+    mechanism: "Nearby competitor store reduces traffic"
+  - from: competitive pressure
+    to: pricing and margin
+    mechanism: "Forced price response compresses margin"
+  - from: pricing and margin
+    to: revenue decline
+    mechanism: "Price cuts may reduce total revenue"
+  - from: seasonality
+    to: revenue decline
+    mechanism: "Seasonal dips not offset by promotions"
+  - from: channel mix shift
+    to: store performance
+    mechanism: "Online growth reduces in-store traffic"
+  - from: product performance
+    to: revenue decline
+    mechanism: "Declining products drag down revenue"
+  - from: loyalty program effect
+    to: revenue decline
+    mechanism: "Redemption spikes reduce effective revenue"
+  - from: loyalty program effect
+    to: customer churn
+    mechanism: "Program changes affect retention"
+  - from: store performance
+    to: revenue decline
+    mechanism: "Underperforming stores reduce total revenue"
+  - from: customer relationship changes
+    to: customer churn
+    mechanism: "Account manager departures trigger churn"
+  - from: competitive pressure
+    to: customer churn
+    mechanism: "Competitor offerings attract customers"
+  - from: loyalty program changes
+    to: loyalty program effect
+    mechanism: "Rule changes alter redemption behavior"
+  - from: channel mix shift
+    to: customer churn
+    mechanism: "Forced channel migration alienates customers"
+  - from: supply chain disruption
+    to: revenue decline
+    mechanism: "Stock shortages lead to lost sales"
+
+  - from: competitive pressure
+    to: revenue decline
+    mechanism: "Competitors attract customers away"
+
+  - from: customer churn
+    to: revenue decline
+    mechanism: "Lost customers mean lost revenue"
+
+  - from: competitive pressure
+    to: customer churn
+    mechanism: "Better competitor offers cause churn"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EXAMPLES - Few-shot SQL examples
+# ═══════════════════════════════════════════════════════════════════════════
+examples:
+  - id: ex_lookup_1
+    category: LOOKUP
+    question: "What was our total revenue last month?"
+    sql: |
+      SELECT SUM(order_total) as revenue
+      FROM `${bigquery_project}.${bigquery_dataset}.orders`
+      WHERE status = 'completed'
+        AND order_date >= DATE_TRUNC(DATE_SUB(CURRENT_DATE(), INTERVAL 1 MONTH), MONTH)
+        AND order_date < DATE_TRUNC(CURRENT_DATE(), MONTH)
+    tables: [orders]
+
+  - id: ex_lookup_2
+    category: LOOKUP
+    question: "What are the top 5 stores by revenue?"
+    sql: |
+      SELECT s.store_name, s.region, SUM(o.order_total) as revenue
+      FROM `${bigquery_project}.${bigquery_dataset}.orders` o
+      JOIN `${bigquery_project}.${bigquery_dataset}.stores` s ON o.store_id = s.store_id
+      WHERE o.status = 'completed'
+      GROUP BY s.store_name, s.region
+      ORDER BY revenue DESC
+      LIMIT 5
+    tables: [orders, stores]
+
+  - id: ex_trend_1
+    category: TREND
+    question: "Show revenue trend for the past 6 months"
+    sql: |
+      SELECT 
+        FORMAT_DATE('%Y-%m', order_date) as month,
+        SUM(order_total) as revenue
+      FROM `${bigquery_project}.${bigquery_dataset}.orders`
+      WHERE status = 'completed'
+        AND order_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 6 MONTH)
+      GROUP BY 1
+      ORDER BY 1
+    tables: [orders]
+
+  - id: ex_compare_1
+    category: ENTITY_COMPARE
+    question: "Compare revenue between London and Manchester"
+    sql: |
+      SELECT 
+        s.region,
+        SUM(o.order_total) as revenue,
+        COUNT(DISTINCT o.order_id) as orders
+      FROM `${bigquery_project}.${bigquery_dataset}.orders` o
+      JOIN `${bigquery_project}.${bigquery_dataset}.stores` s ON o.store_id = s.store_id
+      WHERE o.status = 'completed'
+        AND s.region IN ('London', 'North West')
+      GROUP BY s.region
+    tables: [orders, stores]
+
+  - id: ex_segment_1
+    category: SEGMENT_COMPARE
+    question: "How does enterprise segment compare to smb?"
+    sql: |
+      SELECT 
+        c.segment,
+        COUNT(DISTINCT o.order_id) as orders,
+        SUM(o.order_total) as revenue,
+        AVG(o.order_total) as aov
+      FROM `${bigquery_project}.${bigquery_dataset}.orders` o
+      JOIN `${bigquery_project}.${bigquery_dataset}.customers` c ON o.customer_id = c.customer_id
+      WHERE o.status = 'completed'
+        AND c.segment IN ('enterprise', 'smb')
+      GROUP BY c.segment
+    tables: [orders, customers]
+
+  - id: ex_period_1
+    category: PERIOD_COMPARE
+    question: "How did Q1 compare to Q4 last year?"
+    sql: |
+      SELECT 
+        CASE 
+          WHEN order_date BETWEEN '2025-01-01' AND '2025-03-31' THEN 'Q1 2025'
+          WHEN order_date BETWEEN '2024-10-01' AND '2024-12-31' THEN 'Q4 2024'
+        END as period,
+        SUM(order_total) as revenue
+      FROM `${bigquery_project}.${bigquery_dataset}.orders`
+      WHERE status = 'completed'
+        AND order_date BETWEEN '2024-10-01' AND '2025-03-31'
+      GROUP BY 1
+    tables: [orders]
+
+  - id: ex_margin_1
+    category: LOOKUP
+    question: "What is our gross margin by category?"
+    sql: |
+      SELECT 
+        p.category,
+        SAFE_DIVIDE(SUM(oi.line_total - (p.cost * oi.quantity)), SUM(oi.line_total)) as gross_margin
+      FROM `${bigquery_project}.${bigquery_dataset}.order_items` oi
+      JOIN `${bigquery_project}.${bigquery_dataset}.products` p ON oi.product_id = p.product_id
+      GROUP BY p.category
+      ORDER BY gross_margin DESC
+    tables: [order_items, products]
+
+  - id: ex_promo_1
+    category: LOOKUP
+    question: "Which promotions had the best ROI?"
+    sql: |
+      SELECT 
+        pr.promo_name,
+        pr.promo_type,
+        SUM(o.order_total) as promo_revenue,
+        pr.budget_usd,
+        SAFE_DIVIDE(SUM(o.order_total) - pr.budget_usd, pr.budget_usd) as roi
+      FROM `${bigquery_project}.${bigquery_dataset}.orders` o
+      JOIN `${bigquery_project}.${bigquery_dataset}.promotions` pr ON o.promo_id = pr.promo_id
+      WHERE o.status = 'completed'
+      GROUP BY pr.promo_name, pr.promo_type, pr.budget_usd
+      ORDER BY roi DESC
+      LIMIT 10
+    tables: [orders, promotions]

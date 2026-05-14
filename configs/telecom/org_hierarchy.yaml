@@ -1,0 +1,250 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# TELECOM ORG HIERARCHY
+# ═══════════════════════════════════════════════════════════════════════════
+# Compatible with: semantic_layer_setup_configurable.py (no code changes)
+#
+# Required keys:
+#   regions: name, country, head, store_count
+#   stores: store_id, name, region, type, capacity, opened, manager_name, manager_since, manager_experience
+#   territories: name, region, annual_target
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REGIONS
+# Fields: name, country, head, store_count
+# ─────────────────────────────────────────────────────────────────────────────
+regions:
+  - name: "London"
+    country: "GB"
+    head: "David Williams"
+    store_count: 450
+
+  - name: "South East"
+    country: "GB"
+    head: "Emma Brown"
+    store_count: 380
+
+  - name: "Midlands"
+    country: "GB"
+    head: "James Taylor"
+    store_count: 320
+
+  - name: "North West"
+    country: "GB"
+    head: "Sarah Johnson"
+    store_count: 290
+
+  - name: "Yorkshire"
+    country: "GB"
+    head: "Michael Lee"
+    store_count: 210
+
+  - name: "Scotland"
+    country: "GB"
+    head: "Robert MacGregor"
+    store_count: 280
+
+  - name: "North East"
+    country: "GB"
+    head: "Jennifer Clark"
+    store_count: 180
+
+  - name: "Wales"
+    country: "GB"
+    head: "Owen Davies"
+    store_count: 150
+
+  - name: "South West"
+    country: "GB"
+    head: "Peter Collins"
+    store_count: 200
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STORES (Network Clusters)
+# Fields: store_id, name, region, type, capacity, opened, manager_name, manager_since, manager_experience
+# ─────────────────────────────────────────────────────────────────────────────
+stores:
+  # London clusters
+  - store_id: "CLU_LON_001"
+    name: "London Central"
+    region: "London"
+    type: "urban_core"
+    capacity: 50
+    opened: "2015-03-01"
+    manager_name: "Alex Turner"
+    manager_since: "2022-01-15"
+    manager_experience: 8
+
+  - store_id: "CLU_LON_002"
+    name: "Canary Wharf"
+    region: "London"
+    type: "venue"
+    capacity: 25
+    opened: "2016-06-01"
+    manager_name: "Lisa Morgan"
+    manager_since: "2021-06-01"
+    manager_experience: 10
+
+  - store_id: "CLU_LON_003"
+    name: "London South"
+    region: "London"
+    type: "suburban"
+    capacity: 40
+    opened: "2014-09-01"
+    manager_name: "Chris Bennett"
+    manager_since: "2023-03-01"
+    manager_experience: 5
+
+  # North West clusters
+  - store_id: "CLU_NW_001"
+    name: "Manchester Central"
+    region: "North West"
+    type: "urban_core"
+    capacity: 35
+    opened: "2015-07-01"
+    manager_name: "Michelle Adams"
+    manager_since: "2020-09-01"
+    manager_experience: 12
+
+  - store_id: "CLU_NW_002"
+    name: "Liverpool"
+    region: "North West"
+    type: "urban_core"
+    capacity: 30
+    opened: "2016-02-01"
+    manager_name: "John Murphy"
+    manager_since: "2022-05-01"
+    manager_experience: 7
+
+  - store_id: "CLU_NW_003"
+    name: "M62 Corridor"
+    region: "North West"
+    type: "highway"
+    capacity: 20
+    opened: "2017-04-01"
+    manager_name: "David Hughes"
+    manager_since: "2021-01-01"
+    manager_experience: 9
+
+  # Scotland clusters
+  - store_id: "CLU_SCO_001"
+    name: "Glasgow Central"
+    region: "Scotland"
+    type: "urban_core"
+    capacity: 30
+    opened: "2015-05-01"
+    manager_name: "Fiona MacLeod"
+    manager_since: "2019-07-01"
+    manager_experience: 14
+
+  - store_id: "CLU_SCO_002"
+    name: "Edinburgh"
+    region: "Scotland"
+    type: "urban_core"
+    capacity: 28
+    opened: "2015-08-01"
+    manager_name: "Andrew Campbell"
+    manager_since: "2021-11-01"
+    manager_experience: 6
+
+  - store_id: "CLU_SCO_003"
+    name: "Highlands"
+    region: "Scotland"
+    type: "rural"
+    capacity: 45
+    opened: "2018-06-01"
+    manager_name: "Morag Stewart"
+    manager_since: "2020-03-01"
+    manager_experience: 11
+
+  # Midlands clusters
+  - store_id: "CLU_MID_001"
+    name: "Birmingham Central"
+    region: "Midlands"
+    type: "urban_core"
+    capacity: 35
+    opened: "2015-04-01"
+    manager_name: "Richard Evans"
+    manager_since: "2022-08-01"
+    manager_experience: 8
+
+  - store_id: "CLU_MID_002"
+    name: "Coventry"
+    region: "Midlands"
+    type: "suburban"
+    capacity: 25
+    opened: "2016-10-01"
+    manager_name: "Karen White"
+    manager_since: "2021-02-01"
+    manager_experience: 9
+
+  # South East clusters
+  - store_id: "CLU_SE_001"
+    name: "M25 Ring"
+    region: "South East"
+    type: "highway"
+    capacity: 30
+    opened: "2016-03-01"
+    manager_name: "Steven Hall"
+    manager_since: "2020-06-01"
+    manager_experience: 10
+
+  - store_id: "CLU_SE_002"
+    name: "Brighton"
+    region: "South East"
+    type: "suburban"
+    capacity: 20
+    opened: "2017-01-01"
+    manager_name: "Helen Scott"
+    manager_since: "2023-01-01"
+    manager_experience: 4
+
+  # Yorkshire clusters
+  - store_id: "CLU_YKS_001"
+    name: "Leeds Central"
+    region: "Yorkshire"
+    type: "urban_core"
+    capacity: 28
+    opened: "2016-05-01"
+    manager_name: "Paul Robinson"
+    manager_since: "2021-09-01"
+    manager_experience: 7
+
+  - store_id: "CLU_YKS_002"
+    name: "Sheffield"
+    region: "Yorkshire"
+    type: "urban_core"
+    capacity: 25
+    opened: "2016-08-01"
+    manager_name: "Emma Wilson"
+    manager_since: "2022-04-01"
+    manager_experience: 6
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TERRITORIES
+# Fields: name, region, annual_target
+# ─────────────────────────────────────────────────────────────────────────────
+territories:
+  - name: "Metro Operations"
+    region: "London"
+    annual_target: 500000000
+
+  - name: "Northern Operations"
+    region: "North West"
+    annual_target: 250000000
+
+  - name: "Scotland Operations"
+    region: "Scotland"
+    annual_target: 180000000
+
+  - name: "Central Operations"
+    region: "Midlands"
+    annual_target: 220000000
+
+  - name: "Southern Operations"
+    region: "South East"
+    annual_target: 280000000
+
+  - name: "Yorkshire Operations"
+    region: "Yorkshire"
+    annual_target: 150000000

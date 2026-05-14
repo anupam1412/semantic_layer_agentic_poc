@@ -1,0 +1,301 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# DOMAIN LAYERS CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════
+# Defines the types of domain events that can TRIGGER business concepts.
+# These are the "10 layers" in Neo4j that explain WHY metrics moved.
+#
+# Each layer is a category of real-world events. The actual event data
+# goes in domain_data.json - this file defines the SCHEMA for those events.
+# ═══════════════════════════════════════════════════════════════════════════
+
+meta:
+  name: "Retail Domain Layers"
+  version: "1.0"
+  description: "Event types that explain metric movements in retail"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DOMAIN LAYERS - Categories of events that trigger concepts
+# ═══════════════════════════════════════════════════════════════════════════
+layers:
+  # ─── Supply Chain Events ───
+  - name: supply_incidents
+    label: "Supply incidents"
+    description: "Product availability issues, supplier problems"
+    triggers_concepts: [supply_disruption, revenue_decline]
+    node_label: SupplyIncident
+    properties:
+      - name: id
+        type: STRING
+        required: true
+      - name: product_id
+        type: STRING
+      - name: supplier
+        type: STRING
+      - name: incident_type
+        type: STRING
+        enum: [stockout, delay, quality_issue, recall]
+      - name: start_date
+        type: DATE
+      - name: end_date
+        type: DATE
+      - name: affected_stores
+        type: LIST
+      - name: revenue_impact
+        type: FLOAT
+
+  # ─── Competitor Actions ───
+  - name: competitor_actions
+    label: "Competitor actions"
+    description: "Competitor promotions, store openings, pricing changes"
+    triggers_concepts: [traffic_decline, customer_churn, margin_erosion]
+    node_label: CompetitorAction
+    properties:
+      - name: id
+        type: STRING
+        required: true
+      - name: competitor
+        type: STRING
+      - name: action_type
+        type: STRING
+        enum: [store_opening, promotion, price_cut, new_product]
+      - name: date
+        type: DATE
+      - name: affected_regions
+        type: LIST
+      - name: description
+        type: STRING
+
+  # ─── Personnel Changes ───
+  - name: account_managers
+    label: "Account managers"
+    description: "Manager changes, tenure, performance"
+    triggers_concepts: [customer_churn, revenue_decline]
+    node_label: AccountManager
+    properties:
+      - name: id
+        type: STRING
+        required: true
+      - name: name
+        type: STRING
+      - name: store_id
+        type: STRING
+      - name: region
+        type: STRING
+      - name: start_date
+        type: DATE
+      - name: left_date
+        type: DATE
+      - name: experience_years
+        type: INT
+      - name: performance_rating
+        type: STRING
+
+  # ─── Pricing Decisions ───
+  - name: pricing_decisions
+    label: "Pricing decisions"
+    description: "Price changes, margin adjustments"
+    triggers_concepts: [margin_erosion, promotional_impact, revenue_decline]
+    node_label: PricingDecision
+    properties:
+      - name: id
+        type: STRING
+        required: true
+      - name: decision_type
+        type: STRING
+        enum: [price_increase, price_decrease, margin_target, cost_pass_through]
+      - name: category
+        type: STRING
+      - name: effective_date
+        type: DATE
+      - name: change_pct
+        type: FLOAT
+      - name: rationale
+        type: STRING
+
+  # ─── Loyalty Programs ───
+  - name: loyalty_campaigns
+    label: "Loyalty campaigns"
+    description: "Loyalty program changes, point promotions"
+    triggers_concepts: [promotional_impact, customer_churn, basket_shrinkage]
+    node_label: LoyaltyCampaign
+    properties:
+      - name: id
+        type: STRING
+        required: true
+      - name: name
+        type: STRING
+      - name: campaign_type
+        type: STRING
+        enum: [points_multiplier, bonus_points, tier_promotion, redemption_event]
+      - name: start_date
+        type: DATE
+      - name: end_date
+        type: DATE
+      - name: target_segments
+        type: LIST
+      - name: points_multiplier
+        type: FLOAT
+
+  # ─── Redemption Rules ───
+  - name: redemption_rules
+    label: "Redemption rules"
+    description: "Changes to how loyalty points can be redeemed"
+    triggers_concepts: [promotional_impact, margin_erosion]
+    node_label: RedemptionRule
+    properties:
+      - name: id
+        type: STRING
+        required: true
+      - name: rule_type
+        type: STRING
+        enum: [threshold_change, expiry_change, category_restriction, value_change]
+      - name: effective_date
+        type: DATE
+      - name: old_value
+        type: STRING
+      - name: new_value
+        type: STRING
+
+  # ─── Policy Changes ───
+  - name: policy_changes
+    label: "Policy changes"
+    description: "Return policies, credit terms, operational rules"
+    triggers_concepts: [customer_churn, margin_erosion]
+    node_label: PolicyChange
+    properties:
+      - name: id
+        type: STRING
+        required: true
+      - name: policy_type
+        type: STRING
+        enum: [return_policy, credit_terms, delivery_policy, pricing_policy]
+      - name: change_description
+        type: STRING
+      - name: effective_date
+        type: DATE
+      - name: affected_segments
+        type: LIST
+
+  # ─── Market Conditions ───
+  - name: market_conditions
+    label: "Market conditions"
+    description: "External market factors, economic indicators"
+    triggers_concepts: [traffic_decline, customer_churn, basket_shrinkage]
+    node_label: MarketCondition
+    properties:
+      - name: id
+        type: STRING
+        required: true
+      - name: condition_type
+        type: STRING
+        enum: [economic, seasonal, weather, regulatory]
+      - name: description
+        type: STRING
+      - name: start_date
+        type: DATE
+      - name: end_date
+        type: DATE
+      - name: severity
+        type: STRING
+        enum: [low, medium, high]
+      - name: affected_regions
+        type: LIST
+
+  # ─── Contracts ───
+  - name: contracts
+    label: "Contracts"
+    description: "Supplier contracts, customer agreements"
+    triggers_concepts: [supply_disruption, margin_erosion]
+    node_label: Contract
+    properties:
+      - name: id
+        type: STRING
+        required: true
+      - name: contract_type
+        type: STRING
+        enum: [supplier, customer, service]
+      - name: counterparty
+        type: STRING
+      - name: start_date
+        type: DATE
+      - name: end_date
+        type: DATE
+      - name: status
+        type: STRING
+        enum: [active, expiring, terminated, renewed]
+      - name: value
+        type: FLOAT
+
+  # ─── Churn Risk Signals ───
+  - name: churn_risk_signals
+    label: "Churn risk signals"
+    description: "Early warning indicators of customer churn"
+    triggers_concepts: [customer_churn, revenue_decline]
+    node_label: ChurnSignal
+    properties:
+      - name: id
+        type: STRING
+        required: true
+      - name: customer_id
+        type: STRING
+      - name: signal_type
+        type: STRING
+        enum: [purchase_frequency_drop, complaint, negative_feedback, competitor_mention]
+      - name: detected_date
+        type: DATE
+      - name: risk_score
+        type: FLOAT
+      - name: description
+        type: STRING
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TRIGGER RELATIONSHIPS
+# ═══════════════════════════════════════════════════════════════════════════
+# These define which layers can trigger which concepts.
+# When loading events, the system creates (Event)-[:TRIGGERS]->(Concept) edges.
+
+trigger_rules:
+  - layer: supply_incidents
+    triggers:
+      - concept: supply_disruption
+        condition: "incident_type IN ['stockout', 'delay']"
+      - concept: revenue_decline
+        condition: "revenue_impact > 10000"
+
+  - layer: competitor_actions
+    triggers:
+      - concept: traffic_decline
+        condition: "action_type = 'store_opening'"
+      - concept: margin_erosion
+        condition: "action_type = 'price_cut'"
+
+  - layer: account_managers
+    triggers:
+      - concept: customer_churn
+        condition: "left_date IS NOT NULL"
+      - concept: revenue_decline
+        condition: "performance_rating = 'underperforming'"
+
+  - layer: pricing_decisions
+    triggers:
+      - concept: margin_erosion
+        condition: "decision_type = 'price_decrease'"
+      - concept: revenue_decline
+        condition: "decision_type = 'price_increase'"
+
+  - layer: loyalty_campaigns
+    triggers:
+      - concept: promotional_impact
+        condition: "campaign_type IN ['points_multiplier', 'bonus_points']"
+
+  - layer: market_conditions
+    triggers:
+      - concept: traffic_decline
+        condition: "severity IN ['medium', 'high']"
+      - concept: basket_shrinkage
+        condition: "condition_type = 'economic'"
+
+  - layer: churn_risk_signals
+    triggers:
+      - concept: customer_churn
+        condition: "risk_score > 0.7"

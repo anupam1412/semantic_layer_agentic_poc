@@ -1,0 +1,148 @@
+"""
+Vertex AI Vector Search — 4 Embedding Indexes
+==============================================
+1. Tables index    — schema metadata
+2. KPIs index      — KPI definitions + thresholds
+3. Concepts index  — business concepts + causal edges
+4. Examples index  — few-shot SQL queries
+"""
+
+import os, json, hashlib, logging
+import vertexai
+from vertexai.language_models import TextEmbeddingModel, TextEmbeddingInput
+from google.cloud import aiplatform
+
+log = logging.getLogger("agentic_sl.vs")
+
+
+class Embeddings:
+    def __init__(self):
+        try:
+            vertexai.init(project=os.getenv("GCP_PROJECT", "acn-uki-ds-data-ai-project"),
+                          location=os.getenv("GCP_REGION", "europe-west2"))
+            self.model = TextEmbeddingModel.from_pretrained(
+                os.getenv("EMBEDDING_MODEL", "text-embedding-005"))
+        except Exception as e:
+            log.warning(f"Embeddings init failed: {e}. Will use empty embeddings.")
+            self.model = None
+
+    def embed(self, texts, task="RETRIEVAL_DOCUMENT"):
+        if not self.model:
+            return [[0.0] * 768 for _ in texts]  # Zero vectors as fallback
+        inputs = [TextEmbeddingInput(text=t, task_type=task) for t in texts]
+        out = []
+        for i in range(0, len(inputs), 250):
+            out.extend([e.values for e in self.model.get_embeddings(inputs[i:i+250])])
+        return out
+
+
+class VectorSearch:
+    def __init__(self):
+        aiplatform.init(project=os.getenv("GCP_PROJECT", "acn-uki-ds-data-ai-project"),
+                        location=os.getenv("GCP_REGION", "europe-west2"))
+        self.emb = Embeddings()
+        self.endpoint = None
+        ep_id = os.getenv("VS_INDEX_ENDPOINT_ID", "")
+        if ep_id:
+            try: self.endpoint = aiplatform.MatchingEngineIndexEndpoint(ep_id)
+            except Exception as e: log.warning(f"VS endpoint: {e}")
+        self._idx = {
+            "tables": os.getenv("VS_TABLES_INDEX_ID", ""),
+            "kpis": os.getenv("VS_KPIS_INDEX_ID", ""),
+            "concepts": os.getenv("VS_CONCEPTS_INDEX_ID", ""),
+            "examples": os.getenv("VS_EXAMPLES_INDEX_ID", "")}
+        self._dep = {"tables": "tables_deployed", "kpis": "kpis_deployed",
+                     "concepts": "concepts_deployed", "examples": "examples_deployed"}
+        self._meta: dict[str, dict] = {}
+
+    @staticmethod
+    def _id(t): return hashlib.md5(t.encode()).hexdigest()
+
+    def _upsert(self, coll, dps):
+        idx = self._idx.get(coll)
+        if idx:
+            try:
+                aiplatform.MatchingEngineIndex(idx).upsert_datapoints(datapoints=[
+                    aiplatform.compat.types.matching_engine_index.IndexDatapoint(
+                        datapoint_id=d["id"], feature_vector=d["embedding"]) for d in dps])
+            except Exception as e: log.warning(f"Upsert {coll}: {e}")
+        for d in dps: self._meta[d["id"]] = d["meta"]
+
+    def _search(self, dep_id, query, k):
+        if self.endpoint:
+            try:
+                emb = self.emb.embed([query], task="RETRIEVAL_QUERY")[0]
+                resp = self.endpoint.find_neighbors(deployed_index_id=dep_id, queries=[emb], num_neighbors=k)
+                return [{"distance": n.distance, **self._meta.get(n.id, {})}
+                        for n in (resp[0] if resp and resp[0] else [])]
+            except Exception as e:
+                log.warning(f"VS gRPC failed ({e}), using fallback")
+        return self._fallback(query, k)
+
+    def _fallback(self, q, k):
+        qw = set(q.lower().split())
+        scored = [(max(0.01, 1-len(qw & set(" ".join(str(v) for v in m.values()).lower().split()))
+                       /max(len(qw),1)), m) for m in self._meta.values()]
+        scored.sort(key=lambda x: x[0])
+        return [{"distance": s[0], **s[1]} for s in scored[:k]]
+
+    def index_from_graph(self, kg):
+        """Pull all data from Neo4j and index into Vertex AI."""
+        ont = json.loads(kg.get_full_ontology_text())
+        for fqn, info in ont.get("tables", {}).items():
+            cols = ", ".join(c["name"] for c in info.get("columns", []))
+            doc = f"Table: {info.get('name','')} ({fqn})\nDesc: {info.get('description','')}\nCols: {cols}"
+            emb = self.emb.embed([doc])[0]
+            self._upsert("tables", [{"id": self._id(fqn), "embedding": emb,
+                                     "meta": {"fqn": fqn, "name": info.get("name",""), "doc": doc}}])
+        for kpi in ont.get("kpis", []):
+            doc = (f"KPI: {kpi['name']}\nExpression: {kpi.get('expression','')}\n"
+                   f"Description: {kpi.get('description','')}\nTables: {', '.join(kpi.get('tables',[]))}")
+            emb = self.emb.embed([doc])[0]
+            self._upsert("kpis", [{"id": self._id(kpi["name"]), "embedding": emb,
+                                   "meta": {"kpi_name": kpi["name"], "doc": doc}}])
+        cm = ont.get("causal_map", [])
+        for c in ont.get("business_concepts", []):
+            cname = c["concept"]
+            causes = [e["source"] for e in cm if e["target"] == cname]
+            effects = [e["target"] for e in cm if e["source"] == cname]
+            causal = ""
+            if causes: causal += f"\nCaused by: {', '.join(causes)}"
+            if effects: causal += f"\nAffects: {', '.join(effects)}"
+            doc = (f"Concept: {cname}\nDescription: {c.get('description','')}\n"
+                   f"Synonyms: {', '.join(c.get('synonyms',[]))}\n"
+                   f"Calculation: {c.get('calculation_hint','')}{causal}")
+            emb = self.emb.embed([doc])[0]
+            self._upsert("concepts", [{"id": self._id(cname), "embedding": emb,
+                                       "meta": {"concept": cname, "doc": doc}}])
+        for ex in ont.get("example_queries", []):
+            doc = f"Q: {ex['question']}\nSQL: {ex['sql']}\nComplexity: {ex.get('complexity','simple')}"
+            emb = self.emb.embed([doc])[0]
+            self._upsert("examples", [{"id": self._id(ex["question"]), "embedding": emb,
+                                       "meta": {"nl_query": ex["question"], "sql": ex["sql"],
+                                                "doc": doc, "complexity": ex.get("complexity","simple")}}])
+        log.info(f"Indexed: {len(ont.get('tables',{}))} tables, {len(ont.get('kpis',[]))} KPIs, "
+                 f"{len(ont.get('business_concepts',[]))} concepts, {len(ont.get('example_queries',[]))} examples")
+
+    def index_example(self, q, sql, tables):
+        doc = f"Q: {q}\nSQL: {sql}"
+        emb = self.emb.embed([doc])[0]
+        self._upsert("examples", [{"id": self._id(q), "embedding": emb,
+                                   "meta": {"nl_query": q, "sql": sql, "doc": doc}}])
+
+    def search_tables(self, q, k=5):
+        return [{"fqn":r.get("fqn",""),"name":r.get("name",""),"doc":r.get("doc",""),"score":r.get("distance",1)}
+                for r in self._search(self._dep["tables"], q, k)]
+
+    def search_kpis(self, q, k=5):
+        return [{"kpi_name":r.get("kpi_name",""),"doc":r.get("doc","")}
+                for r in self._search(self._dep["kpis"], q, k)]
+
+    def search_concepts(self, q, k=5):
+        return [{"concept":r.get("concept",""),"doc":r.get("doc","")}
+                for r in self._search(self._dep["concepts"], q, k)]
+
+    def search_examples(self, q, k=5):
+        return [{"nl_query":r.get("nl_query",""),"sql":r.get("sql",""),"doc":r.get("doc",""),
+                 "complexity":r.get("complexity","simple")}
+                for r in self._search(self._dep["examples"], q, k)]

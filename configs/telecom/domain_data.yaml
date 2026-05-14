@@ -1,0 +1,879 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# TELECOM DOMAIN DATA (Aligned with BigQuery Mock Data)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Entity IDs match create_mock_data_telecom.py for BQ ↔ Neo4j alignment.
+#
+# BigQuery: Full fact tables (call_events, network_measurements, etc.)
+# Neo4j: Topology subset + Events + Ontology layer
+#
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 1 — REGIONS (matches REGIONS in create_mock_data_telecom.py)
+# ═══════════════════════════════════════════════════════════════════════════
+
+regions:
+  - region_id: "REG_LON"
+    region_name: "London"
+    region_type: "urban"
+    country: "GB"
+    market: "consumer"
+    population_density: "high"
+
+  - region_id: "REG_SE"
+    region_name: "South East"
+    region_type: "suburban"
+    country: "GB"
+    market: "consumer"
+    population_density: "medium"
+
+  - region_id: "REG_MID"
+    region_name: "Midlands"
+    region_type: "suburban"
+    country: "GB"
+    market: "consumer"
+    population_density: "medium"
+
+  - region_id: "REG_NW"
+    region_name: "North West"
+    region_type: "urban"
+    country: "GB"
+    market: "consumer"
+    population_density: "high"
+
+  - region_id: "REG_YKS"
+    region_name: "Yorkshire"
+    region_type: "suburban"
+    country: "GB"
+    market: "consumer"
+    population_density: "medium"
+
+  - region_id: "REG_SCO"
+    region_name: "Scotland"
+    region_type: "mixed"
+    country: "GB"
+    market: "consumer"
+    population_density: "low"
+
+  - region_id: "REG_NE"
+    region_name: "North East"
+    region_type: "suburban"
+    country: "GB"
+    market: "consumer"
+    population_density: "medium"
+
+  - region_id: "REG_WAL"
+    region_name: "Wales"
+    region_type: "rural"
+    country: "GB"
+    market: "consumer"
+    population_density: "low"
+
+  - region_id: "REG_SW"
+    region_name: "South West"
+    region_type: "rural"
+    country: "GB"
+    market: "consumer"
+    population_density: "low"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 2 — CLUSTERS (matches CLUSTERS_PER_REGION in mock data)
+# ═══════════════════════════════════════════════════════════════════════════
+
+clusters:
+  # London
+  - cluster_id: "CLU_LON_001"
+    cluster_name: "London Central"
+    region_id: "REG_LON"
+    cluster_type: "urban_core"
+    tower_count: 8
+
+  - cluster_id: "CLU_LON_002"
+    cluster_name: "Canary Wharf"
+    region_id: "REG_LON"
+    cluster_type: "venue"
+    tower_count: 5
+
+  - cluster_id: "CLU_LON_003"
+    cluster_name: "London South"
+    region_id: "REG_LON"
+    cluster_type: "suburban"
+    tower_count: 6
+
+  # North West
+  - cluster_id: "CLU_NW_001"
+    cluster_name: "Manchester Central"
+    region_id: "REG_NW"
+    cluster_type: "urban_core"
+    tower_count: 6
+
+  - cluster_id: "CLU_NW_002"
+    cluster_name: "Liverpool"
+    region_id: "REG_NW"
+    cluster_type: "urban_core"
+    tower_count: 5
+
+  - cluster_id: "CLU_NW_003"
+    cluster_name: "M62 Corridor"
+    region_id: "REG_NW"
+    cluster_type: "highway"
+    tower_count: 4
+
+  # Scotland
+  - cluster_id: "CLU_SCO_001"
+    cluster_name: "Glasgow Central"
+    region_id: "REG_SCO"
+    cluster_type: "urban_core"
+    tower_count: 5
+
+  - cluster_id: "CLU_SCO_002"
+    cluster_name: "Edinburgh"
+    region_id: "REG_SCO"
+    cluster_type: "urban_core"
+    tower_count: 4
+
+  - cluster_id: "CLU_SCO_003"
+    cluster_name: "Highlands"
+    region_id: "REG_SCO"
+    cluster_type: "rural"
+    tower_count: 3
+
+  # Midlands
+  - cluster_id: "CLU_MID_001"
+    cluster_name: "Birmingham Central"
+    region_id: "REG_MID"
+    cluster_type: "urban_core"
+    tower_count: 6
+
+  # South East
+  - cluster_id: "CLU_SE_001"
+    cluster_name: "M25 Ring"
+    region_id: "REG_SE"
+    cluster_type: "highway"
+    tower_count: 8
+
+  # Yorkshire
+  - cluster_id: "CLU_YKS_001"
+    cluster_name: "Leeds Central"
+    region_id: "REG_YKS"
+    cluster_type: "urban_core"
+    tower_count: 5
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 3 — TOWERS (Key towers for event tracking)
+# IDs TWR_00001 - TWR_00020 match first 20 towers from mock data (seed=42)
+# ═══════════════════════════════════════════════════════════════════════════
+
+towers:
+  # London Central (CLU_LON_001) - Towers 1-8
+  - tower_id: "TWR_00001"
+    tower_name: "London Central Tower 1"
+    region_id: "REG_LON"
+    cluster_id: "CLU_LON_001"
+    latitude: 51.5074
+    longitude: -0.1278
+    tower_type: "rooftop"
+    power_source: "grid"
+    has_backup_power: true
+
+  - tower_id: "TWR_00002"
+    tower_name: "London Central Tower 2"
+    region_id: "REG_LON"
+    cluster_id: "CLU_LON_001"
+    latitude: 51.5080
+    longitude: -0.1290
+    tower_type: "rooftop"
+    power_source: "grid"
+    has_backup_power: true
+
+  - tower_id: "TWR_00003"
+    tower_name: "London Central Tower 3"
+    region_id: "REG_LON"
+    cluster_id: "CLU_LON_001"
+    latitude: 51.5065
+    longitude: -0.1300
+    tower_type: "monopole"
+    power_source: "grid"
+    has_backup_power: true
+
+  # Canary Wharf (CLU_LON_002) - Towers 9-13
+  - tower_id: "TWR_00009"
+    tower_name: "Canary Wharf Tower 1"
+    region_id: "REG_LON"
+    cluster_id: "CLU_LON_002"
+    latitude: 51.5054
+    longitude: -0.0235
+    tower_type: "rooftop"
+    power_source: "grid"
+    has_backup_power: true
+
+  - tower_id: "TWR_00010"
+    tower_name: "Canary Wharf Tower 2"
+    region_id: "REG_LON"
+    cluster_id: "CLU_LON_002"
+    latitude: 51.5048
+    longitude: -0.0220
+    tower_type: "rooftop"
+    power_source: "grid"
+    has_backup_power: true
+
+  # Manchester Central (CLU_NW_001) - Towers ~20-25
+  - tower_id: "TWR_00020"
+    tower_name: "Manchester Central Tower 1"
+    region_id: "REG_NW"
+    cluster_id: "CLU_NW_001"
+    latitude: 53.4808
+    longitude: -2.2426
+    tower_type: "rooftop"
+    power_source: "grid"
+    has_backup_power: true
+
+  - tower_id: "TWR_00021"
+    tower_name: "Manchester Central Tower 2"
+    region_id: "REG_NW"
+    cluster_id: "CLU_NW_001"
+    latitude: 53.4820
+    longitude: -2.2440
+    tower_type: "monopole"
+    power_source: "grid"
+    has_backup_power: false
+
+  # Birmingham Central (CLU_MID_001)
+  - tower_id: "TWR_00040"
+    tower_name: "Birmingham Central Tower 1"
+    region_id: "REG_MID"
+    cluster_id: "CLU_MID_001"
+    latitude: 52.4862
+    longitude: -1.8904
+    tower_type: "rooftop"
+    power_source: "grid"
+    has_backup_power: true
+
+  # M25 Ring (CLU_SE_001)
+  - tower_id: "TWR_00050"
+    tower_name: "M25 Junction Tower 1"
+    region_id: "REG_SE"
+    cluster_id: "CLU_SE_001"
+    latitude: 51.4000
+    longitude: 0.1000
+    tower_type: "monopole"
+    power_source: "grid"
+    has_backup_power: true
+
+  # Scotland - Glasgow (CLU_SCO_001)
+  - tower_id: "TWR_00060"
+    tower_name: "Glasgow Central Tower 1"
+    region_id: "REG_SCO"
+    cluster_id: "CLU_SCO_001"
+    latitude: 55.8642
+    longitude: -4.2518
+    tower_type: "rooftop"
+    power_source: "grid"
+    has_backup_power: false
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 4 — CELLS (Key cells for event tracking)
+# IDs CELL_000001 - CELL_000050 match first cells from mock data (seed=42)
+# ═══════════════════════════════════════════════════════════════════════════
+
+cells:
+  # London Central Tower 1 cells
+  - cell_id: "CELL_000001"
+    cell_name: "London Central Tower 1 Cell 1"
+    tower_id: "TWR_00001"
+    region_id: "REG_LON"
+    technology: "4G"
+    band_mhz: "1800"
+    sector: "A"
+    azimuth_deg: 0
+    tilt_deg: 4.5
+    tx_power_dbm: 43.0
+    designed_capacity: 1000
+    cell_type: "macro"
+    vendor: "Ericsson"
+    pci: 101
+    is_active: true
+
+  - cell_id: "CELL_000002"
+    cell_name: "London Central Tower 1 Cell 2"
+    tower_id: "TWR_00001"
+    region_id: "REG_LON"
+    technology: "4G"
+    band_mhz: "1800"
+    sector: "B"
+    azimuth_deg: 120
+    tilt_deg: 5.0
+    tx_power_dbm: 43.0
+    designed_capacity: 1000
+    cell_type: "macro"
+    vendor: "Ericsson"
+    pci: 102
+    is_active: true
+
+  - cell_id: "CELL_000003"
+    cell_name: "London Central Tower 1 Cell 3"
+    tower_id: "TWR_00001"
+    region_id: "REG_LON"
+    technology: "5G"
+    band_mhz: "3500"
+    sector: "A"
+    azimuth_deg: 0
+    tilt_deg: 3.0
+    tx_power_dbm: 40.0
+    designed_capacity: 2000
+    cell_type: "macro"
+    vendor: "Ericsson"
+    pci: 103
+    is_active: true
+
+  # Canary Wharf cells (key for pilot pollution incident)
+  - cell_id: "CELL_000030"
+    cell_name: "Canary Wharf Tower 1 Cell 1"
+    tower_id: "TWR_00009"
+    region_id: "REG_LON"
+    technology: "4G"
+    band_mhz: "2600"
+    sector: "A"
+    azimuth_deg: 0
+    tilt_deg: 6.0
+    tx_power_dbm: 44.0
+    designed_capacity: 1500
+    cell_type: "macro"
+    vendor: "Ericsson"
+    pci: 130
+    is_active: true
+
+  - cell_id: "CELL_000031"
+    cell_name: "Canary Wharf Tower 1 Cell 2"
+    tower_id: "TWR_00009"
+    region_id: "REG_LON"
+    technology: "5G"
+    band_mhz: "3500"
+    sector: "A"
+    azimuth_deg: 0
+    tilt_deg: 4.0
+    tx_power_dbm: 41.0
+    designed_capacity: 2000
+    cell_type: "macro"
+    vendor: "Ericsson"
+    pci: 131
+    is_active: true
+
+  - cell_id: "CELL_000032"
+    cell_name: "Canary Wharf Tower 2 Cell 1"
+    tower_id: "TWR_00010"
+    region_id: "REG_LON"
+    technology: "4G"
+    band_mhz: "1800"
+    sector: "A"
+    azimuth_deg: 0
+    tilt_deg: 5.5
+    tx_power_dbm: 43.0
+    designed_capacity: 1000
+    cell_type: "macro"
+    vendor: "Nokia"
+    pci: 132
+    is_active: true
+
+  # Manchester cells (key for storm incident)
+  - cell_id: "CELL_000080"
+    cell_name: "Manchester Central Tower 1 Cell 1"
+    tower_id: "TWR_00020"
+    region_id: "REG_NW"
+    technology: "4G"
+    band_mhz: "800"
+    sector: "A"
+    azimuth_deg: 0
+    tilt_deg: 5.0
+    tx_power_dbm: 46.0
+    designed_capacity: 500
+    cell_type: "macro"
+    vendor: "Ericsson"
+    pci: 180
+    is_active: true
+
+  - cell_id: "CELL_000081"
+    cell_name: "Manchester Central Tower 1 Cell 2"
+    tower_id: "TWR_00020"
+    region_id: "REG_NW"
+    technology: "4G"
+    band_mhz: "1800"
+    sector: "B"
+    azimuth_deg: 120
+    tilt_deg: 4.5
+    tx_power_dbm: 43.0
+    designed_capacity: 1000
+    cell_type: "macro"
+    vendor: "Ericsson"
+    pci: 181
+    is_active: true
+
+  # Birmingham cells (key for power outage incident)
+  - cell_id: "CELL_000120"
+    cell_name: "Birmingham Central Tower 1 Cell 1"
+    tower_id: "TWR_00040"
+    region_id: "REG_MID"
+    technology: "4G"
+    band_mhz: "800"
+    sector: "A"
+    azimuth_deg: 0
+    tilt_deg: 6.0
+    tx_power_dbm: 46.0
+    designed_capacity: 500
+    cell_type: "macro"
+    vendor: "Nokia"
+    pci: 220
+    is_active: true
+
+  # M25 cells (key for fiber cut incident)
+  - cell_id: "CELL_000150"
+    cell_name: "M25 Junction Tower 1 Cell 1"
+    tower_id: "TWR_00050"
+    region_id: "REG_SE"
+    technology: "4G"
+    band_mhz: "800"
+    sector: "A"
+    azimuth_deg: 0
+    tilt_deg: 3.0
+    tx_power_dbm: 46.0
+    designed_capacity: 500
+    cell_type: "macro"
+    vendor: "Huawei"
+    pci: 250
+    is_active: true
+
+  # Scotland cells (key for storm incident)
+  - cell_id: "CELL_000180"
+    cell_name: "Glasgow Central Tower 1 Cell 1"
+    tower_id: "TWR_00060"
+    region_id: "REG_SCO"
+    technology: "4G"
+    band_mhz: "800"
+    sector: "A"
+    azimuth_deg: 0
+    tilt_deg: 5.0
+    tx_power_dbm: 46.0
+    designed_capacity: 500
+    cell_type: "macro"
+    vendor: "Ericsson"
+    pci: 280
+    is_active: true
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 5 — EQUIPMENT
+# ═══════════════════════════════════════════════════════════════════════════
+
+equipment:
+  # RRUs for key towers
+  - equipment_id: "EQ_RRU_001"
+    equipment_type: "RRU"
+    vendor: "Ericsson"
+    model: "AIR 6449"
+    firmware_version: "21.Q4.1"
+    install_date: "2023-06-15"
+    status: "active"
+
+  - equipment_id: "EQ_RRU_002"
+    equipment_type: "RRU"
+    vendor: "Ericsson"
+    model: "AIR 6449"
+    firmware_version: "21.Q4.1"
+    install_date: "2023-06-15"
+    status: "failed"  # Ericsson bug affected
+
+  - equipment_id: "EQ_RRU_003"
+    equipment_type: "RRU"
+    vendor: "Nokia"
+    model: "AEQA"
+    firmware_version: "22.1.0"
+    install_date: "2024-01-10"
+    status: "active"
+
+  # BBUs
+  - equipment_id: "EQ_BBU_001"
+    equipment_type: "BBU"
+    vendor: "Ericsson"
+    model: "Baseband 6630"
+    firmware_version: "21.Q4.1"
+    install_date: "2023-06-15"
+    status: "active"
+
+  - equipment_id: "EQ_BBU_002"
+    equipment_type: "BBU"
+    vendor: "Nokia"
+    model: "AirScale"
+    firmware_version: "22.1.0"
+    install_date: "2024-01-10"
+    status: "active"
+
+  # Power supplies
+  - equipment_id: "EQ_PWR_001"
+    equipment_type: "POWER_SUPPLY"
+    vendor: "Eltek"
+    model: "Flatpack2"
+    firmware_version: "3.2"
+    install_date: "2022-03-20"
+    status: "active"
+
+  - equipment_id: "EQ_PWR_002"
+    equipment_type: "POWER_SUPPLY"
+    vendor: "Eltek"
+    model: "Flatpack2"
+    firmware_version: "3.2"
+    install_date: "2022-03-20"
+    status: "failed"  # Storm Arwen affected
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 6 — SUBSCRIBERS (High-value for impact analysis)
+# ═══════════════════════════════════════════════════════════════════════════
+
+subscribers:
+  - subscriber_id: "SUB_ENT_001"
+    subscription_type: "enterprise"
+    segment: "enterprise"
+    loyalty_tier: "platinum"
+    home_region_id: "REG_LON"
+    churn_risk_score: 0.15
+    is_active: true
+
+  - subscriber_id: "SUB_ENT_002"
+    subscription_type: "enterprise"
+    segment: "enterprise"
+    loyalty_tier: "gold"
+    home_region_id: "REG_LON"
+    churn_risk_score: 0.45
+    is_active: true
+
+  - subscriber_id: "SUB_CON_001"
+    subscription_type: "postpaid"
+    segment: "consumer"
+    loyalty_tier: "platinum"
+    home_region_id: "REG_LON"
+    churn_risk_score: 0.20
+    is_active: true
+
+  - subscriber_id: "SUB_CON_002"
+    subscription_type: "postpaid"
+    segment: "consumer"
+    loyalty_tier: "gold"
+    home_region_id: "REG_NW"
+    churn_risk_score: 0.65
+    is_active: true
+
+  - subscriber_id: "SUB_CON_003"
+    subscription_type: "prepaid"
+    segment: "consumer"
+    loyalty_tier: "standard"
+    home_region_id: "REG_SCO"
+    churn_risk_score: 0.80
+    is_active: true
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 7 — EVENTS (Active and resolved incidents)
+# These map to INCIDENTS in create_mock_data_telecom.py
+# ═══════════════════════════════════════════════════════════════════════════
+
+events:
+  # Ericsson baseband bug (Nov 15-18, 2025)
+  - event_id: "EVT_2025_001"
+    event_type: "software_fault_event"
+    severity: "high"
+    start_date: "2025-11-15"
+    end_date: "2025-11-18"
+    is_resolved: true
+    source: "nms_alarm"
+    description: "Ericsson baseband firmware bug causing RLF in London"
+    subscribers_affected: 45000
+    cells_affected: 85
+    impacted_entities:
+      - { entity_type: "KGCell", entity_id: "CELL_000001", impact_type: "degraded", impact_severity: "high" }
+      - { entity_type: "KGCell", entity_id: "CELL_000002", impact_type: "degraded", impact_severity: "high" }
+      - { entity_type: "KGCell", entity_id: "CELL_000030", impact_type: "degraded", impact_severity: "high" }
+      - { entity_type: "KGTower", entity_id: "TWR_00001", impact_type: "degraded", impact_severity: "high" }
+      - { entity_type: "KGTower", entity_id: "TWR_00009", impact_type: "degraded", impact_severity: "high" }
+      - { entity_type: "KGCluster", entity_id: "CLU_LON_001", impact_type: "degraded", impact_severity: "medium" }
+      - { entity_type: "KGCluster", entity_id: "CLU_LON_002", impact_type: "degraded", impact_severity: "medium" }
+
+  # Storm Arwen (Nov 27-30, 2025)
+  - event_id: "EVT_2025_002"
+    event_type: "severe_weather"
+    severity: "critical"
+    start_date: "2025-11-27"
+    end_date: "2025-11-30"
+    is_resolved: true
+    source: "field_report"
+    description: "Storm Arwen causing power outages in Scotland and North"
+    subscribers_affected: 120000
+    cells_affected: 150
+    impacted_entities:
+      - { entity_type: "KGRegion", entity_id: "REG_SCO", impact_type: "outage", impact_severity: "critical" }
+      - { entity_type: "KGRegion", entity_id: "REG_NE", impact_type: "outage", impact_severity: "high" }
+      - { entity_type: "KGTower", entity_id: "TWR_00060", impact_type: "outage", impact_severity: "critical" }
+      - { entity_type: "KGCell", entity_id: "CELL_000180", impact_type: "outage", impact_severity: "critical" }
+
+  # Christmas congestion (Dec 24-26, 2025)
+  - event_id: "EVT_2025_003"
+    event_type: "traffic_surge"
+    severity: "medium"
+    start_date: "2025-12-24"
+    end_date: "2025-12-26"
+    is_resolved: true
+    source: "automated_detection"
+    description: "Christmas traffic surge in London and South East"
+    subscribers_affected: 200000
+    cells_affected: 300
+    impacted_entities:
+      - { entity_type: "KGRegion", entity_id: "REG_LON", impact_type: "congested", impact_severity: "medium" }
+      - { entity_type: "KGRegion", entity_id: "REG_SE", impact_type: "congested", impact_severity: "medium" }
+
+  # Pilot pollution Canary Wharf (Feb 1-5, 2026)
+  - event_id: "EVT_2026_001"
+    event_type: "pilot_pollution_event"
+    severity: "high"
+    start_date: "2026-02-01"
+    end_date: "2026-02-05"
+    is_resolved: true
+    source: "automated_detection"
+    description: "Pilot pollution detected in Canary Wharf cluster"
+    subscribers_affected: 15000
+    cells_affected: 12
+    impacted_entities:
+      - { entity_type: "KGCell", entity_id: "CELL_000030", impact_type: "interference", impact_severity: "high" }
+      - { entity_type: "KGCell", entity_id: "CELL_000031", impact_type: "interference", impact_severity: "high" }
+      - { entity_type: "KGCell", entity_id: "CELL_000032", impact_type: "interference", impact_severity: "medium" }
+      - { entity_type: "KGCluster", entity_id: "CLU_LON_002", impact_type: "interference", impact_severity: "high" }
+
+  # Birmingham power outage (Feb 15, 2026)
+  - event_id: "EVT_2026_002"
+    event_type: "mains_power_failure"
+    severity: "high"
+    start_date: "2026-02-15"
+    end_date: "2026-02-15"
+    is_resolved: true
+    source: "nms_alarm"
+    description: "Power grid failure affecting Birmingham city centre"
+    subscribers_affected: 25000
+    cells_affected: 35
+    impacted_entities:
+      - { entity_type: "KGCluster", entity_id: "CLU_MID_001", impact_type: "outage", impact_severity: "high" }
+      - { entity_type: "KGTower", entity_id: "TWR_00040", impact_type: "outage", impact_severity: "high" }
+      - { entity_type: "KGCell", entity_id: "CELL_000120", impact_type: "outage", impact_severity: "high" }
+
+  # M25 fiber cut (Mar 5-6, 2026)
+  - event_id: "EVT_2026_003"
+    event_type: "transport_fault"
+    severity: "critical"
+    start_date: "2026-03-05"
+    end_date: "2026-03-06"
+    is_resolved: true
+    source: "nms_alarm"
+    description: "Fiber cut on M25 backhaul ring"
+    subscribers_affected: 50000
+    cells_affected: 80
+    impacted_entities:
+      - { entity_type: "KGCluster", entity_id: "CLU_SE_001", impact_type: "outage", impact_severity: "critical" }
+      - { entity_type: "KGTower", entity_id: "TWR_00050", impact_type: "outage", impact_severity: "critical" }
+      - { entity_type: "KGCell", entity_id: "CELL_000150", impact_type: "outage", impact_severity: "critical" }
+
+  # Active event: Ongoing interference (current)
+  - event_id: "EVT_2026_004"
+    event_type: "co_channel_interference_event"
+    severity: "medium"
+    start_date: "2026-03-20"
+    end_date: null
+    is_resolved: false
+    source: "automated_detection"
+    description: "Co-channel interference detected between London Central cells"
+    subscribers_affected: 5000
+    cells_affected: 6
+    impacted_entities:
+      - { entity_type: "KGCell", entity_id: "CELL_000001", impact_type: "interference", impact_severity: "medium" }
+      - { entity_type: "KGCell", entity_id: "CELL_000002", impact_type: "interference", impact_severity: "medium" }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 8 — RELATIONSHIPS
+# ═══════════════════════════════════════════════════════════════════════════
+
+neighbours:
+  # London Central neighbours
+  - source_cell_id: "CELL_000001"
+    target_cell_id: "CELL_000002"
+    ho_direction: "bidirectional"
+    ho_offset_db: 3
+    is_active_neighbour: true
+
+  - source_cell_id: "CELL_000001"
+    target_cell_id: "CELL_000003"
+    ho_direction: "bidirectional"
+    ho_offset_db: 2
+    is_active_neighbour: true
+
+  - source_cell_id: "CELL_000002"
+    target_cell_id: "CELL_000003"
+    ho_direction: "bidirectional"
+    ho_offset_db: 2
+    is_active_neighbour: true
+
+  # Canary Wharf neighbours
+  - source_cell_id: "CELL_000030"
+    target_cell_id: "CELL_000031"
+    ho_direction: "bidirectional"
+    ho_offset_db: 2
+    is_active_neighbour: true
+
+  - source_cell_id: "CELL_000030"
+    target_cell_id: "CELL_000032"
+    ho_direction: "bidirectional"
+    ho_offset_db: 4
+    is_active_neighbour: true
+
+
+interferes_with:
+  # Canary Wharf interference (pilot pollution)
+  - source_cell_id: "CELL_000030"
+    target_cell_id: "CELL_000032"
+    interference_type: "pilot_pollution"
+    interference_db: -6.5
+    detected_date: "2026-02-01"
+    is_active: true
+
+  # London Central co-channel
+  - source_cell_id: "CELL_000001"
+    target_cell_id: "CELL_000002"
+    interference_type: "co_channel"
+    interference_db: -8.0
+    detected_date: "2026-03-20"
+    is_active: true
+
+
+served_by:
+  - subscriber_id: "SUB_ENT_001"
+    cell_id: "CELL_000030"
+    relationship_type: "primary"
+    pct_calls: 65.0
+    pct_data: 70.0
+
+  - subscriber_id: "SUB_ENT_002"
+    cell_id: "CELL_000001"
+    relationship_type: "primary"
+    pct_calls: 80.0
+    pct_data: 75.0
+
+  - subscriber_id: "SUB_CON_001"
+    cell_id: "CELL_000003"
+    relationship_type: "primary"
+    pct_calls: 55.0
+    pct_data: 60.0
+
+  - subscriber_id: "SUB_CON_002"
+    cell_id: "CELL_000080"
+    relationship_type: "primary"
+    pct_calls: 70.0
+    pct_data: 65.0
+
+  - subscriber_id: "SUB_CON_003"
+    cell_id: "CELL_000180"
+    relationship_type: "primary"
+    pct_calls: 90.0
+    pct_data: 85.0
+
+
+equipped_with:
+  - cell_id: "CELL_000001"
+    equipment_id: "EQ_RRU_001"
+    equipment_role: "primary"
+
+  - cell_id: "CELL_000002"
+    equipment_id: "EQ_RRU_002"
+    equipment_role: "primary"
+
+  - cell_id: "CELL_000030"
+    equipment_id: "EQ_RRU_003"
+    equipment_role: "primary"
+
+
+powered_by:
+  - tower_id: "TWR_00001"
+    equipment_id: "EQ_PWR_001"
+    power_type: "primary"
+    capacity_kw: 15.0
+    backup_hours: 8
+
+  - tower_id: "TWR_00060"
+    equipment_id: "EQ_PWR_002"
+    power_type: "primary"
+    capacity_kw: 10.0
+    backup_hours: 4
+
+
+event_cascades:
+  # Storm Arwen caused power outage which caused equipment failure
+  - source_event_id: "EVT_2025_002"
+    target_event_id: "EVT_2026_002"
+    mechanism: "power_dependency"
+    lag_minutes: 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 9 — KPI TARGETS (for BigQuery network_kpi_targets table)
+# ═══════════════════════════════════════════════════════════════════════════
+
+network_kpi_targets:
+  - target_id: "TGT_LON_4G_202505"
+    region_id: "REG_LON"
+    technology: "4G"
+    target_month: "2025-05-01"
+    target_cdr: 2.0
+    target_cssr: 98.0
+    target_hosr: 98.0
+    target_throughput: 20.0
+    target_availability: 99.9
+
+  - target_id: "TGT_LON_5G_202505"
+    region_id: "REG_LON"
+    technology: "5G"
+    target_month: "2025-05-01"
+    target_cdr: 1.0
+    target_cssr: 99.0
+    target_hosr: 99.0
+    target_throughput: 100.0
+    target_availability: 99.95
+
+  - target_id: "TGT_NW_4G_202505"
+    region_id: "REG_NW"
+    technology: "4G"
+    target_month: "2025-05-01"
+    target_cdr: 2.5
+    target_cssr: 97.5
+    target_hosr: 97.5
+    target_throughput: 15.0
+    target_availability: 99.5
+
+  - target_id: "TGT_SCO_4G_202505"
+    region_id: "REG_SCO"
+    technology: "4G"
+    target_month: "2025-05-01"
+    target_cdr: 3.0
+    target_cssr: 96.0
+    target_hosr: 96.0
+    target_throughput: 10.0
+    target_availability: 99.0
+
+  - target_id: "TGT_SE_4G_202505"
+    region_id: "REG_SE"
+    technology: "4G"
+    target_month: "2025-05-01"
+    target_cdr: 3.0
+    target_cssr: 96.0
+    target_hosr: 96.0
+    target_throughput: 15.0
+    target_availability: 99.0
