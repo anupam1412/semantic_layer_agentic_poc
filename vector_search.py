@@ -8,13 +8,13 @@ Fixes:
 """
 
 import os, json, hashlib, logging
+from pathlib import Path
 from dotenv import load_dotenv
 
-# Try both _env and .env for compatibility
-if os.path.exists("_env"):
-    load_dotenv("_env")
-else:
-    load_dotenv(".env")
+# Load environment variables (same pattern as knowledge_graph.py)
+env_file = Path("_env") if Path("_env").exists() else Path(".env")
+if env_file.exists():
+    load_dotenv(env_file)
 
 import vertexai
 from vertexai.language_models import TextEmbeddingModel, TextEmbeddingInput
@@ -113,7 +113,6 @@ class VectorSearch:
                     cols = ", ".join([c["name"] for c in info.get("columns", [])[:10]])
                     doc = f"Table: {info.get('name', '')} ({fqn})\nDesc: {info.get('description', '')}\nCols: {cols}"
                     self._meta[self._id(fqn)] = {
-                        "_type": "table",
                         "fqn": fqn,
                         "name": info.get("name", ""),
                         "doc": doc,
@@ -126,7 +125,6 @@ class VectorSearch:
                 name = k.get("name", "")
                 doc = f"KPI: {name}\nDescription: {k.get('description', '')}\nExpression: {k.get('expression', '')}"
                 self._meta[self._id(name)] = {
-                    "_type": "kpi",
                     "kpi_name": name,
                     "doc": doc,
                 }
@@ -139,14 +137,13 @@ class VectorSearch:
                 synonyms = ", ".join(c.get("synonyms", [])[:5])
                 doc = f"Concept: {name}\nDescription: {c.get('description', '')}\nSynonyms: {synonyms}"
                 self._meta[self._id(name)] = {
-                    "_type": "concept",
                     "concept": name,
                     "doc": doc,
                 }
             log.info(f"  Loaded {len(concepts)} concepts")
             
             # Load examples (both SQL and Cypher)
-            examples = self._kg.get_similar_examples([""], limit=100)
+            examples = self._kg.get_similar_examples("", limit=100)
             for ex in examples:
                 q = ex.get("question", "")
                 if not q:
@@ -155,7 +152,6 @@ class VectorSearch:
                 if ex_type == "cypher":
                     doc = f"Q: {q}\nCypher: {ex.get('cypher', '')}"
                     self._meta[self._id(q)] = {
-                        "_type": "example",
                         "nl_query": q,
                         "cypher": ex.get("cypher", ""),
                         "doc": doc,
@@ -165,7 +161,6 @@ class VectorSearch:
                 else:
                     doc = f"Q: {q}\nSQL: {ex.get('sql', '')}"
                     self._meta[self._id(q)] = {
-                        "_type": "example",
                         "nl_query": q,
                         "sql": ex.get("sql", ""),
                         "doc": doc,
@@ -201,7 +196,7 @@ class VectorSearch:
         for d in dps:
             self._meta[d["id"]] = d["meta"]
 
-    def _search(self, dep_id, query, k, filter_type=None):
+    def _search(self, dep_id, query, k):
         # Ensure cache is loaded before searching
         self._ensure_meta_loaded()
         
@@ -217,29 +212,20 @@ class VectorSearch:
                 ]
             except Exception as e:
                 log.warning(f"VS gRPC failed ({e}), using keyword fallback")
-        return self._fallback(query, k, filter_type)
+        return self._fallback(query, k)
 
-    def _fallback(self, q, k, filter_type=None):
+    def _fallback(self, q, k):
         """Keyword-overlap fallback when Vector Search is unreachable.
 
         FIX: More keyword overlap now gives LOWER distance (better match).
         Previous version had this inverted.
-        
-        Args:
-            filter_type: If set, only return items with matching _type field
         """
         qw = set(q.lower().split())
-        
-        # Filter by type if specified
-        items = self._meta.values()
-        if filter_type:
-            items = [m for m in items if m.get("_type") == filter_type]
-        
         if not qw:
-            return list(items)[:k]
+            return list(self._meta.values())[:k]
 
         scored = []
-        for meta in items:
+        for meta in self._meta.values():
             doc_text = " ".join(str(v) for v in meta.values()).lower()
             doc_words = set(doc_text.split())
             overlap = len(qw & doc_words)
@@ -278,7 +264,7 @@ class VectorSearch:
             self._upsert(
                 "tables",
                 [{"id": self._id(fqn), "embedding": emb,
-                  "meta": {"_type": "table", "fqn": fqn, "name": info.get("name", ""), "doc": doc}}],
+                  "meta": {"fqn": fqn, "name": info.get("name", ""), "doc": doc}}],
             )
 
         # KPIs
@@ -293,7 +279,7 @@ class VectorSearch:
             self._upsert(
                 "kpis",
                 [{"id": self._id(kpi["name"]), "embedding": emb,
-                  "meta": {"_type": "kpi", "kpi_name": kpi["name"], "doc": doc}}],
+                  "meta": {"kpi_name": kpi["name"], "doc": doc}}],
             )
 
         # Concepts (with causal edges embedded in the doc)
@@ -318,7 +304,7 @@ class VectorSearch:
             self._upsert(
                 "concepts",
                 [{"id": self._id(cname), "embedding": emb,
-                  "meta": {"_type": "concept", "concept": cname, "doc": doc}}],
+                  "meta": {"concept": cname, "doc": doc}}],
             )
 
         # Examples
@@ -333,7 +319,6 @@ class VectorSearch:
                 "examples",
                 [{"id": self._id(ex["question"]), "embedding": emb,
                   "meta": {
-                      "_type": "example",
                       "nl_query": ex["question"],
                       "sql": ex["sql"],
                       "doc": doc,
@@ -354,7 +339,7 @@ class VectorSearch:
         self._upsert(
             "examples",
             [{"id": self._id(q), "embedding": emb,
-              "meta": {"_type": "example", "nl_query": q, "sql": sql, "doc": doc}}],
+              "meta": {"nl_query": q, "sql": sql, "doc": doc}}],
         )
 
     # ── Search methods ──
@@ -367,19 +352,19 @@ class VectorSearch:
                 "doc": r.get("doc", ""),
                 "score": r.get("distance", 1),
             }
-            for r in self._search(self._dep["tables"], q, k, filter_type="table")
+            for r in self._search(self._dep["tables"], q, k)
         ]
 
     def search_kpis(self, q, k=5):
         return [
             {"kpi_name": r.get("kpi_name", ""), "doc": r.get("doc", "")}
-            for r in self._search(self._dep["kpis"], q, k, filter_type="kpi")
+            for r in self._search(self._dep["kpis"], q, k)
         ]
 
     def search_concepts(self, q, k=5):
         return [
             {"concept": r.get("concept", ""), "doc": r.get("doc", "")}
-            for r in self._search(self._dep["concepts"], q, k, filter_type="concept")
+            for r in self._search(self._dep["concepts"], q, k)
         ]
 
     def search_examples(self, q, k=5):
@@ -390,5 +375,5 @@ class VectorSearch:
                 "doc": r.get("doc", ""),
                 "complexity": r.get("complexity", "simple"),
             }
-            for r in self._search(self._dep["examples"], q, k, filter_type="example")
+            for r in self._search(self._dep["examples"], q, k)
         ]

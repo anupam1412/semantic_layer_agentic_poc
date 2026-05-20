@@ -6,18 +6,23 @@ Changes from previous version:
   - upsert_account_manager: fixed conditional SET for left_date
   - get_domain_context_for_question: deduplicated promotion_targeting
   - all_tables / all_concepts / get_all_kpis: added error handling
+  - Added dotenv loading for environment variables
+  - get_causal_chain: auto-resolves KPI names to concept names
 """
 
 import os, json, logging
-from dotenv import load_dotenv
-
-# Try both _env and .env for compatibility
-if os.path.exists("_env"):
-    load_dotenv("_env")
-else:
-    load_dotenv(".env")
-
+from pathlib import Path
 from neo4j import GraphDatabase
+
+# Load environment variables from .env or _env
+try:
+    from dotenv import load_dotenv
+    # Try _env first (project convention), then .env
+    env_file = Path("_env") if Path("_env").exists() else Path(".env")
+    if env_file.exists():
+        load_dotenv(env_file)
+except ImportError:
+    pass  # dotenv not installed, rely on system env vars
 
 log = logging.getLogger("agentic_sl.kg")
 
@@ -281,15 +286,105 @@ class KnowledgeGraph:
             )
 
     def get_causal_chain(self, concept_name, depth=3):
+        """Get causal chain for a concept.
+        
+        Accepts any of:
+        - A BusinessConcept name (e.g., 'call_drop_degradation')
+        - A KPI name (e.g., 'call_drop_rate')
+        - A display name (e.g., 'Call Drop Rate') - auto-normalized
+        """
         depth = min(max(int(depth), 1), 10)
+        
+        # Normalize: "Call Drop Rate" → "call_drop_rate"
+        normalized = concept_name.lower().replace(" ", "_").replace("-", "_")
+        
+        # Extract key terms for matching: "call_drop_rate" → ["call", "drop"]
+        key_terms = [t for t in normalized.replace("_", " ").split() 
+                     if t not in ("rate", "ratio", "percentage", "pct", "count", "total", "avg", "average")]
+        
         with self.driver.session() as s:
+            resolved_name = None
+            
+            # 1. Try exact concept name match
+            result = s.run(
+                "MATCH (c:BusinessConcept {name: $n}) RETURN c.name AS name LIMIT 1",
+                n=concept_name
+            )
+            record = result.single()
+            if record:
+                resolved_name = record["name"]
+            
+            # 2. Try normalized concept name
+            if not resolved_name:
+                result = s.run(
+                    "MATCH (c:BusinessConcept {name: $n}) RETURN c.name AS name LIMIT 1",
+                    n=normalized
+                )
+                record = result.single()
+                if record:
+                    resolved_name = record["name"]
+            
+            # 3. Try KPI lookup - prefer concept with similar name
+            if not resolved_name and key_terms:
+                # Build a scoring query to find the best matching concept
+                # Prefer concepts that share key terms with the KPI name
+                result = s.run(
+                    """
+                    MATCH (c:BusinessConcept)-[:MEASURES]->(k:KPI)
+                    WHERE k.name = $kpi_name OR k.name = $kpi_normalized
+                    WITH c, k,
+                         REDUCE(score = 0, term IN $terms | 
+                           score + CASE WHEN toLower(c.name) CONTAINS term THEN 10 ELSE 0 END +
+                           CASE WHEN toLower(c.description) CONTAINS term THEN 5 ELSE 0 END
+                         ) AS match_score
+                    RETURN c.name AS name, match_score
+                    ORDER BY match_score DESC
+                    LIMIT 1
+                    """,
+                    kpi_name=concept_name,
+                    kpi_normalized=normalized,
+                    terms=key_terms
+                )
+                record = result.single()
+                if record:
+                    resolved_name = record["name"]
+            
+            # 4. Fallback: any concept that MEASURES the KPI
+            if not resolved_name:
+                result = s.run(
+                    "MATCH (c:BusinessConcept)-[:MEASURES]->(k:KPI {name: $n}) "
+                    "RETURN c.name AS name LIMIT 1",
+                    n=normalized
+                )
+                record = result.single()
+                if record:
+                    resolved_name = record["name"]
+            
+            # 5. Fuzzy match on concept synonyms
+            if not resolved_name:
+                search_term = concept_name.lower().replace("_", " ")
+                result = s.run(
+                    "MATCH (c:BusinessConcept) "
+                    "WHERE toLower(c.name) CONTAINS $n OR $n CONTAINS toLower(c.name) "
+                    "   OR ANY(syn IN c.synonyms WHERE toLower(syn) CONTAINS $n OR $n CONTAINS toLower(syn)) "
+                    "RETURN c.name AS name LIMIT 1",
+                    n=search_term
+                )
+                record = result.single()
+                if record:
+                    resolved_name = record["name"]
+            
+            # Use resolved name or fall back to original (will return 0 results)
+            target_name = resolved_name or concept_name
+            
+            # Now get the causal chain
             causes = []
             for d in range(1, depth + 1):
                 for r in s.run(
                     f"MATCH (c:BusinessConcept)-[:AFFECTS*{d}]->"
                     f"(t:BusinessConcept {{name:$n}}) "
                     f"RETURN DISTINCT c.name AS concept, c.description AS desc",
-                    n=concept_name,
+                    n=target_name,
                 ):
                     if not any(x["concept"] == r["concept"] for x in causes):
                         causes.append({
@@ -302,14 +397,14 @@ class KnowledgeGraph:
                     f"MATCH (s:BusinessConcept {{name:$n}})-[:AFFECTS*{d}]->"
                     f"(e:BusinessConcept) "
                     f"RETURN DISTINCT e.name AS concept, e.description AS desc",
-                    n=concept_name,
+                    n=target_name,
                 ):
                     if not any(x["concept"] == r["concept"] for x in effects):
                         effects.append({
                             "concept": r["concept"],
                             "description": r["desc"] or "",
                         })
-            return {"concept": concept_name, "caused_by": causes, "affects": effects}
+            return {"concept": target_name, "caused_by": causes, "affects": effects}
 
     def get_causal_map(self):
         with self.driver.session() as s:
@@ -982,11 +1077,15 @@ class KnowledgeGraph:
                 for r in s.run("MATCH (b:BusinessConcept) RETURN b")
             ]
 
+    def get_all_kpis(self):
+        with self.driver.session() as s:
+            names = [r["n"] for r in s.run("MATCH (k:KPI) RETURN k.name AS n")]
+        return [self.get_kpi(n) for n in names if self.get_kpi(n)]
+
     def get_all_concepts(self):
         """Get all concepts with full metadata for vector search indexing."""
         with self.driver.session() as s:
             concepts = []
-            # Get BusinessConcepts
             for r in s.run("MATCH (b:BusinessConcept) RETURN b"):
                 b = r["b"]
                 concepts.append({
@@ -995,56 +1094,42 @@ class KnowledgeGraph:
                     "synonyms": list(b.get("synonyms") or []),
                     "calculation_hint": b.get("calculation_hint", ""),
                 })
-            # Also get OntConcepts if they exist
-            for r in s.run("MATCH (c:OntConcept) RETURN c"):
-                c = r["c"]
-                concepts.append({
-                    "name": c.get("name", ""),
-                    "description": c.get("description", ""),
-                    "synonyms": list(c.get("synonyms") or []),
-                    "calculation_hint": "",
-                })
             return concepts
 
-    def get_similar_examples(self, queries, limit=100):
-        """Get all query examples from the graph.
-        
-        Args:
-            queries: List of query strings (not used for now, returns all examples)
-            limit: Maximum number of examples to return
-        
-        Returns:
-            List of example dicts with question, sql/cypher, type, complexity
+    def get_similar_examples(self, question: str, limit: int = 3):
+        """Get similar query examples for few-shot prompting.
+        Returns examples stored in Neo4j as QueryExample nodes.
         """
-        examples = []
         with self.driver.session() as s:
-            # Get SQL examples (QueryExample nodes)
+            # Simple keyword matching for now (could be enhanced with embeddings)
+            examples = []
+            keywords = question.lower().split()[:5]  # First 5 words
+            
             for r in s.run(
-                "MATCH (e:QueryExample) RETURN e LIMIT $limit",
-                limit=limit
+                """
+                MATCH (e:QueryExample)
+                WHERE ANY(word IN $keywords WHERE toLower(e.question) CONTAINS word)
+                RETURN e.question AS question, e.sql AS sql, e.category AS category
+                LIMIT $limit
+                """,
+                keywords=keywords, limit=limit
             ):
-                e = r["e"]
                 examples.append({
-                    "question": e.get("question", ""),
-                    "sql": e.get("sql", ""),
-                    "complexity": e.get("complexity", "simple"),
-                    "type": "sql",
+                    "question": r["question"],
+                    "sql": r["sql"],
+                    "category": r["category"],
                 })
-            # Get Cypher examples (CypherExample nodes) if they exist
-            for r in s.run(
-                "MATCH (e:CypherExample) RETURN e LIMIT $limit",
-                limit=limit
-            ):
-                e = r["e"]
-                examples.append({
-                    "question": e.get("question", ""),
-                    "cypher": e.get("cypher", ""),
-                    "complexity": e.get("complexity", "complex"),
-                    "type": "cypher",
-                })
-        return examples
-
-    def get_all_kpis(self):
-        with self.driver.session() as s:
-            names = [r["n"] for r in s.run("MATCH (k:KPI) RETURN k.name AS n")]
-        return [self.get_kpi(n) for n in names if self.get_kpi(n)]
+            
+            # If no keyword matches, return any examples
+            if not examples:
+                for r in s.run(
+                    "MATCH (e:QueryExample) RETURN e.question AS question, e.sql AS sql, e.category AS category LIMIT $limit",
+                    limit=limit
+                ):
+                    examples.append({
+                        "question": r["question"],
+                        "sql": r["sql"],
+                        "category": r["category"],
+                    })
+            
+            return examples
