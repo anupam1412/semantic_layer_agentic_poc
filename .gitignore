@@ -45,3 +45,13 @@ debug_*.py
 # OS
 .DS_Store
 Thumbs.db
+__pycache__/
+*.pyc
+.adk/
+_env
+*.zip
+*.bak
+*.txt
+!requirements.txt
+!dockerfile.txt
+!cloud-run-deploy.txt
