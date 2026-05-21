@@ -1,13 +1,15 @@
 """
-Vertex AI Vector Search — 4 Embedding Indexes (Fixed)
-=====================================================
-Fixes:
-  - _fallback: inverted scoring logic corrected (more overlap = lower distance)
-  - index_from_graph: handles empty ontology gracefully
-  - Embeddings: fallback to zero vectors if Vertex AI unavailable
+Vector Search — Neo4j-Stored Embeddings with Local Query Embedding
+==================================================================
+Changes from previous version:
+  - Embeddings stored in Neo4j as node properties (computed during setup)
+  - Query embedding done locally with sentence-transformers (no Vertex AI runtime dependency)
+  - create_indexes() method added for setup script compatibility
+  - VectorSearch accepts optional neo4j_driver parameter
 """
 
 import os, json, hashlib, logging
+import numpy as np
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -16,161 +18,221 @@ env_file = Path("_env") if Path("_env").exists() else Path(".env")
 if env_file.exists():
     load_dotenv(env_file)
 
-import vertexai
-from vertexai.language_models import TextEmbeddingModel, TextEmbeddingInput
-from google.cloud import aiplatform
-
 log = logging.getLogger("agentic_sl.vs")
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Local Embeddings (sentence-transformers)
+# ─────────────────────────────────────────────────────────────────────────────
+
 class Embeddings:
+    """Local sentence-transformers embeddings (replaces Vertex AI)."""
+    
     def __init__(self):
+        self.model = None
+        self._dim = 384  # all-MiniLM-L6-v2 dimension
         try:
-            vertexai.init(
-                project=os.getenv("GCP_PROJECT", "acn-uki-ds-data-ai-project"),
-                location=os.getenv("GCP_REGION", "europe-west2"),
-            )
-            self.model = TextEmbeddingModel.from_pretrained(
-                os.getenv("EMBEDDING_MODEL", "text-embedding-005")
-            )
+            from sentence_transformers import SentenceTransformer
+            model_name = os.getenv("LOCAL_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+            self.model = SentenceTransformer(model_name)
+            log.info(f"Local embedding model loaded: {model_name}")
+        except ImportError:
+            log.warning("sentence-transformers not installed. Using keyword fallback.")
         except Exception as e:
-            log.warning(f"Embeddings init failed: {e}. Using zero-vector fallback.")
-            self.model = None
+            log.warning(f"Embeddings init failed: {e}. Using keyword fallback.")
 
     def embed(self, texts, task="RETRIEVAL_DOCUMENT"):
+        """Embed texts. task param kept for API compatibility but not used."""
         if not self.model:
-            return [[0.0] * 768 for _ in texts]
-        inputs = [TextEmbeddingInput(text=t, task_type=task) for t in texts]
-        out = []
-        for i in range(0, len(inputs), 250):
-            out.extend(
-                [e.values for e in self.model.get_embeddings(inputs[i : i + 250])]
-            )
-        return out
+            return [[0.0] * self._dim for _ in texts]
+        try:
+            return [self.model.encode(t, convert_to_numpy=True).tolist() for t in texts]
+        except Exception as e:
+            log.warning(f"Embedding failed: {e}")
+            return [[0.0] * self._dim for _ in texts]
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cosine Similarity
+# ─────────────────────────────────────────────────────────────────────────────
+
+def cosine_similarity(vec1, vec2):
+    """Compute cosine similarity between two vectors."""
+    if not vec1 or not vec2 or len(vec1) != len(vec2):
+        return 0.0
+    a = np.array(vec1)
+    b = np.array(vec2)
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(np.dot(a, b) / (norm_a * norm_b))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VectorSearch Class
+# ─────────────────────────────────────────────────────────────────────────────
 
 class VectorSearch:
-    def __init__(self):
-        aiplatform.init(
-            project=os.getenv("GCP_PROJECT", "acn-uki-ds-data-ai-project"),
-            location=os.getenv("GCP_REGION", "europe-west2"),
-        )
+    """
+    Vector search using:
+    - Pre-computed embeddings stored in Neo4j (as node properties)
+    - Local sentence-transformers for query embedding
+    - In-memory cosine similarity search
+    """
+    
+    def __init__(self, neo4j_driver=None):
+        """
+        Initialize VectorSearch.
+        
+        Args:
+            neo4j_driver: Optional Neo4j driver (used by setup script)
+        """
+        self._neo4j_driver = neo4j_driver
         self.emb = Embeddings()
-        self.endpoint = None
-        ep_id = os.getenv("VS_INDEX_ENDPOINT_ID", "")
-        if ep_id:
-            try:
-                self.endpoint = aiplatform.MatchingEngineIndexEndpoint(ep_id)
-            except Exception as e:
-                log.warning(f"VS endpoint init failed: {e}")
-        self._idx = {
-            "tables": os.getenv("VS_TABLES_INDEX_ID", ""),
-            "kpis": os.getenv("VS_KPIS_INDEX_ID", ""),
-            "concepts": os.getenv("VS_CONCEPTS_INDEX_ID", ""),
-            "examples": os.getenv("VS_EXAMPLES_INDEX_ID", ""),
-        }
-        self._dep = {
-            "tables": "tables_deployed",
-            "kpis": "kpis_deployed",
-            "concepts": "concepts_deployed",
-            "examples": "examples_deployed",
-        }
         self._meta: dict[str, dict] = {}
-        self._kg = None  # Lazy reference to KnowledgeGraph
+        self._embeddings: dict[str, list] = {}  # id -> embedding vector
+        self._kg = None
         self._meta_loaded = False
 
-    def _ensure_meta_loaded(self):
-        """Auto-populate _meta cache from Neo4j if empty."""
-        if self._meta_loaded:
-            return
-        
+    def _get_driver(self):
+        """Get Neo4j driver from passed reference or from KnowledgeGraph."""
+        if self._neo4j_driver:
+            return self._neo4j_driver
         if self._kg is None:
             try:
-                # Try package import first (when running via ADK from parent dir)
                 from .knowledge_graph import KnowledgeGraph
                 self._kg = KnowledgeGraph()
             except ImportError:
                 try:
-                    # Fallback to direct import (when running standalone)
                     from knowledge_graph import KnowledgeGraph
                     self._kg = KnowledgeGraph()
                 except Exception as e:
                     log.warning(f"Could not load KnowledgeGraph: {e}")
-                    return
+                    return None
             except Exception as e:
                 log.warning(f"Could not load KnowledgeGraph: {e}")
-                return
+                return None
+        return self._kg.driver if self._kg else None
+
+    def _run_query(self, query, params=None):
+        """Run a Cypher query and return results."""
+        driver = self._get_driver()
+        if not driver:
+            return []
+        with driver.session() as s:
+            result = s.run(query, **(params or {}))
+            return [dict(r) for r in result]
+
+    def _ensure_meta_loaded(self):
+        """Load metadata and embeddings from Neo4j into memory cache."""
+        if self._meta_loaded:
+            return
+        
+        if not self._get_driver():
+            log.warning("No Neo4j driver available, cannot load cache")
+            return
         
         log.info("Auto-populating VectorSearch cache from Neo4j...")
         
         try:
-            # Load tables
-            tables = self._kg.all_tables()
-            for fqn in tables:
-                ctx = self._kg.get_table_context([fqn])
-                if fqn in ctx:
-                    info = ctx[fqn]
-                    cols = ", ".join([c["name"] for c in info.get("columns", [])[:10]])
-                    doc = f"Table: {info.get('name', '')} ({fqn})\nDesc: {info.get('description', '')}\nCols: {cols}"
-                    self._meta[self._id(fqn)] = {
-                        "fqn": fqn,
-                        "name": info.get("name", ""),
-                        "doc": doc,
-                    }
-            log.info(f"  Loaded {len(tables)} tables")
-            
-            # Load KPIs
-            kpis = self._kg.get_all_kpis()
-            for k in kpis:
-                name = k.get("name", "")
-                doc = f"KPI: {name}\nDescription: {k.get('description', '')}\nExpression: {k.get('expression', '')}"
-                self._meta[self._id(name)] = {
-                    "kpi_name": name,
-                    "doc": doc,
-                }
-            log.info(f"  Loaded {len(kpis)} KPIs")
-            
-            # Load concepts (both BusinessConcept and OntConcept)
-            concepts = self._kg.get_all_concepts()
-            for c in concepts:
-                name = c.get("name", "")
-                synonyms = ", ".join(c.get("synonyms", [])[:5])
-                doc = f"Concept: {name}\nDescription: {c.get('description', '')}\nSynonyms: {synonyms}"
-                self._meta[self._id(name)] = {
-                    "concept": name,
-                    "doc": doc,
-                }
-            log.info(f"  Loaded {len(concepts)} concepts")
-            
-            # Load examples (both SQL and Cypher)
-            examples = self._kg.get_similar_examples("", limit=100)
-            for ex in examples:
-                q = ex.get("question", "")
-                if not q:
+            # Load tables with embeddings
+            results = self._run_query("""
+                MATCH (t:Table)
+                OPTIONAL MATCH (t)-[:HAS_COLUMN]->(c:Column)
+                WITH t, collect(DISTINCT c.name)[0..10] AS cols
+                RETURN t.fqn AS fqn, t.name AS name, t.description AS description,
+                       t.embedding AS embedding, cols
+            """)
+            for r in results:
+                if not r.get("fqn"):
                     continue
-                ex_type = ex.get("type", "sql")
+                cols_str = ", ".join(r.get("cols", []) or [])
+                doc = f"Table: {r.get('name', '')} ({r['fqn']})\nDesc: {r.get('description', '')}\nCols: {cols_str}"
+                item_id = self._id(r["fqn"])
+                self._meta[item_id] = {
+                    "fqn": r["fqn"],
+                    "name": r.get("name", ""),
+                    "doc": doc,
+                    "_type": "table",
+                }
+                if r.get("embedding"):
+                    self._embeddings[item_id] = r["embedding"]
+            log.info(f"  Loaded {len([m for m in self._meta.values() if m.get('_type') == 'table'])} tables")
+            
+            # Load KPIs with embeddings
+            results = self._run_query("""
+                MATCH (k:KPI)
+                RETURN k.name AS name, k.description AS description,
+                       k.expression AS expression, k.embedding AS embedding
+            """)
+            for r in results:
+                if not r.get("name"):
+                    continue
+                doc = f"KPI: {r['name']}\nDescription: {r.get('description', '')}\nExpression: {r.get('expression', '')}"
+                item_id = self._id(r["name"])
+                self._meta[item_id] = {
+                    "kpi_name": r["name"],
+                    "doc": doc,
+                    "_type": "kpi",
+                }
+                if r.get("embedding"):
+                    self._embeddings[item_id] = r["embedding"]
+            log.info(f"  Loaded {len([m for m in self._meta.values() if m.get('_type') == 'kpi'])} KPIs")
+            
+            # Load concepts with embeddings
+            results = self._run_query("""
+                MATCH (b:BusinessConcept)
+                RETURN b.name AS name, b.description AS description,
+                       b.synonyms AS synonyms, b.embedding AS embedding
+            """)
+            for r in results:
+                if not r.get("name"):
+                    continue
+                synonyms = r.get("synonyms") or []
+                if isinstance(synonyms, str):
+                    synonyms = [synonyms]
+                doc = f"Concept: {r['name']}\nDescription: {r.get('description', '')}\nSynonyms: {', '.join(synonyms[:5])}"
+                item_id = self._id(r["name"])
+                self._meta[item_id] = {
+                    "concept": r["name"],
+                    "doc": doc,
+                    "_type": "concept",
+                }
+                if r.get("embedding"):
+                    self._embeddings[item_id] = r["embedding"]
+            log.info(f"  Loaded {len([m for m in self._meta.values() if m.get('_type') == 'concept'])} concepts")
+            
+            # Load examples with embeddings
+            results = self._run_query("""
+                MATCH (e:QueryExample)
+                RETURN e.question AS question, e.sql AS sql, e.cypher AS cypher,
+                       e.complexity AS complexity, e.type AS type, e.embedding AS embedding
+            """)
+            for r in results:
+                if not r.get("question"):
+                    continue
+                ex_type = r.get("type", "sql")
                 if ex_type == "cypher":
-                    doc = f"Q: {q}\nCypher: {ex.get('cypher', '')}"
-                    self._meta[self._id(q)] = {
-                        "nl_query": q,
-                        "cypher": ex.get("cypher", ""),
-                        "doc": doc,
-                        "complexity": "complex",
-                        "type": "cypher",
-                    }
+                    doc = f"Q: {r['question']}\nCypher: {r.get('cypher', '')}"
                 else:
-                    doc = f"Q: {q}\nSQL: {ex.get('sql', '')}"
-                    self._meta[self._id(q)] = {
-                        "nl_query": q,
-                        "sql": ex.get("sql", ""),
-                        "doc": doc,
-                        "complexity": ex.get("complexity", "simple"),
-                        "type": "sql",
-                    }
-            log.info(f"  Loaded {len(examples)} examples")
+                    doc = f"Q: {r['question']}\nSQL: {r.get('sql', '')}"
+                item_id = self._id(r["question"])
+                self._meta[item_id] = {
+                    "nl_query": r["question"],
+                    "sql": r.get("sql", ""),
+                    "cypher": r.get("cypher", ""),
+                    "doc": doc,
+                    "complexity": r.get("complexity", "simple"),
+                    "type": ex_type,
+                    "_type": "example",
+                }
+                if r.get("embedding"):
+                    self._embeddings[item_id] = r["embedding"]
+            log.info(f"  Loaded {len([m for m in self._meta.values() if m.get('_type') == 'example'])} examples")
             
             self._meta_loaded = True
-            log.info(f"VectorSearch cache populated: {len(self._meta)} items total")
+            log.info(f"VectorSearch cache populated: {len(self._meta)} items, {len(self._embeddings)} with embeddings")
             
         except Exception as e:
             log.error(f"Error populating VectorSearch cache: {e}")
@@ -179,170 +241,181 @@ class VectorSearch:
     def _id(t):
         return hashlib.md5(t.encode()).hexdigest()
 
-    def _upsert(self, coll, dps):
-        idx = self._idx.get(coll)
-        if idx:
-            try:
-                aiplatform.MatchingEngineIndex(idx).upsert_datapoints(
-                    datapoints=[
-                        aiplatform.compat.types.matching_engine_index.IndexDatapoint(
-                            datapoint_id=d["id"], feature_vector=d["embedding"]
-                        )
-                        for d in dps
-                    ]
-                )
-            except Exception as e:
-                log.warning(f"Upsert {coll}: {e}")
-        for d in dps:
-            self._meta[d["id"]] = d["meta"]
-
-    def _search(self, dep_id, query, k):
-        # Ensure cache is loaded before searching
+    def _search(self, item_type, query, k):
+        """Search items of a specific type using vector similarity or keyword fallback."""
         self._ensure_meta_loaded()
         
-        if self.endpoint:
-            try:
-                emb = self.emb.embed([query], task="RETRIEVAL_QUERY")[0]
-                resp = self.endpoint.find_neighbors(
-                    deployed_index_id=dep_id, queries=[emb], num_neighbors=k
-                )
-                return [
-                    {"distance": n.distance, **self._meta.get(n.id, {})}
-                    for n in (resp[0] if resp and resp[0] else [])
-                ]
-            except Exception as e:
-                log.warning(f"VS gRPC failed ({e}), using keyword fallback")
-        return self._fallback(query, k)
+        # Filter to items of the requested type
+        type_items = {id: meta for id, meta in self._meta.items() 
+                      if meta.get("_type") == item_type}
+        
+        if not type_items:
+            return []
+        
+        # Try vector search if we have embeddings
+        query_emb = self.emb.embed([query])[0]
+        has_vectors = query_emb and any(query_emb) and self._embeddings
+        
+        if has_vectors:
+            scored = []
+            for item_id, meta in type_items.items():
+                item_emb = self._embeddings.get(item_id, [])
+                if item_emb and len(item_emb) == len(query_emb):
+                    sim = cosine_similarity(query_emb, item_emb)
+                    distance = 1.0 - sim  # Lower = better
+                else:
+                    distance = 1.0  # No embedding, worst score
+                scored.append((distance, meta))
+            
+            scored.sort(key=lambda x: x[0])
+            return [{"distance": s[0], **{k: v for k, v in s[1].items() if k != "_type"}} 
+                    for s in scored[:k]]
+        else:
+            # Keyword fallback
+            return self._fallback(query, k, type_items)
 
-    def _fallback(self, q, k):
-        """Keyword-overlap fallback when Vector Search is unreachable.
-
-        FIX: More keyword overlap now gives LOWER distance (better match).
-        Previous version had this inverted.
-        """
+    def _fallback(self, q, k, items=None):
+        """Keyword-overlap fallback when embeddings unavailable."""
+        if items is None:
+            items = self._meta
+        
         qw = set(q.lower().split())
         if not qw:
-            return list(self._meta.values())[:k]
+            return [{"distance": 1.0, **{k: v for k, v in meta.items() if k != "_type"}} 
+                    for meta in list(items.values())[:k]]
 
         scored = []
-        for meta in self._meta.values():
-            doc_text = " ".join(str(v) for v in meta.values()).lower()
+        for meta in items.values():
+            doc_text = " ".join(str(v) for v in meta.values() if not isinstance(v, list)).lower()
             doc_words = set(doc_text.split())
             overlap = len(qw & doc_words)
-            # Higher overlap → lower distance (better match)
             distance = 1.0 - (overlap / max(len(qw), 1))
             scored.append((distance, meta))
 
         scored.sort(key=lambda x: x[0])
-        return [{"distance": s[0], **s[1]} for s in scored[:k]]
+        return [{"distance": s[0], **{k: v for k, v in s[1].items() if k != "_type"}} 
+                for s in scored[:k]]
 
-    def index_from_graph(self, kg):
-        """Pull all data from Neo4j and index into Vertex AI."""
-        raw = kg.get_full_ontology_text()
-        if not raw:
-            log.warning("Empty ontology, nothing to index.")
+    # ─────────────────────────────────────────────────────────────────────────
+    # Setup Methods
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def create_indexes(self):
+        """
+        Compute and store embeddings in Neo4j.
+        Called by setup script after graph is populated.
+        """
+        log.info("Computing and storing embeddings in Neo4j...")
+        
+        if not self._get_driver():
+            log.error("No Neo4j driver available")
             return
+        
+        if not self.emb.model:
+            log.error("No embedding model available. Install sentence-transformers.")
+            return
+        
+        def embed(text):
+            return self.emb.embed([text])[0]
+        
+        # Embed tables
+        tables = self._run_query("""
+            MATCH (t:Table)
+            OPTIONAL MATCH (t)-[:HAS_COLUMN]->(c:Column)
+            WITH t, collect(DISTINCT c.name)[0..10] AS cols
+            RETURN t.fqn AS fqn, t.name AS name, t.description AS description, cols
+        """)
+        for t in tables:
+            if not t.get("fqn"):
+                continue
+            cols_str = ", ".join(t.get("cols", []) or [])
+            doc = f"Table: {t.get('name', '')} ({t['fqn']})\nDesc: {t.get('description', '')}\nCols: {cols_str}"
+            emb = embed(doc)
+            self._run_query(
+                "MATCH (t:Table {fqn: $fqn}) SET t.embedding = $embedding",
+                {"fqn": t["fqn"], "embedding": emb}
+            )
+        log.info(f"  Embedded {len(tables)} tables")
+        
+        # Embed KPIs
+        kpis = self._run_query("""
+            MATCH (k:KPI)
+            RETURN k.name AS name, k.description AS description, k.expression AS expression
+        """)
+        for k in kpis:
+            if not k.get("name"):
+                continue
+            doc = f"KPI: {k['name']}\nDescription: {k.get('description', '')}\nExpression: {k.get('expression', '')}"
+            emb = embed(doc)
+            self._run_query(
+                "MATCH (k:KPI {name: $name}) SET k.embedding = $embedding",
+                {"name": k["name"], "embedding": emb}
+            )
+        log.info(f"  Embedded {len(kpis)} KPIs")
+        
+        # Embed concepts
+        concepts = self._run_query("""
+            MATCH (b:BusinessConcept)
+            RETURN b.name AS name, b.description AS description, b.synonyms AS synonyms
+        """)
+        for c in concepts:
+            if not c.get("name"):
+                continue
+            synonyms = c.get("synonyms") or []
+            if isinstance(synonyms, str):
+                synonyms = [synonyms]
+            doc = f"Concept: {c['name']}\nDescription: {c.get('description', '')}\nSynonyms: {', '.join(synonyms[:5])}"
+            emb = embed(doc)
+            self._run_query(
+                "MATCH (b:BusinessConcept {name: $name}) SET b.embedding = $embedding",
+                {"name": c["name"], "embedding": emb}
+            )
+        log.info(f"  Embedded {len(concepts)} concepts")
+        
+        # Embed examples
+        examples = self._run_query("""
+            MATCH (e:QueryExample)
+            RETURN e.question AS question, e.sql AS sql, e.cypher AS cypher, e.type AS type
+        """)
+        for e in examples:
+            if not e.get("question"):
+                continue
+            ex_type = e.get("type", "sql")
+            if ex_type == "cypher":
+                doc = f"Q: {e['question']}\nCypher: {e.get('cypher', '')}"
+            else:
+                doc = f"Q: {e['question']}\nSQL: {e.get('sql', '')}"
+            emb = embed(doc)
+            self._run_query(
+                "MATCH (e:QueryExample {question: $question}) SET e.embedding = $embedding",
+                {"question": e["question"], "embedding": emb}
+            )
+        log.info(f"  Embedded {len(examples)} examples")
+        
+        log.info("Embeddings stored in Neo4j successfully.")
 
-        ont = json.loads(raw)
-
-        # Tables
-        for fqn, info in ont.get("tables", {}).items():
-            cols = ", ".join(c["name"] for c in info.get("columns", []))
-            metrics = ""
-            # Find KPIs computed from this table
-            for kpi in ont.get("kpis", []):
-                if fqn in kpi.get("tables", []):
-                    metrics += f", {kpi['name']}"
-            doc = (
-                f"Table: {info.get('name', '')} ({fqn})\n"
-                f"Desc: {info.get('description', '')}\n"
-                f"Cols: {cols}"
-            )
-            if metrics:
-                doc += f"\nMetrics: {metrics.lstrip(', ')}"
-            emb = self.emb.embed([doc])[0]
-            self._upsert(
-                "tables",
-                [{"id": self._id(fqn), "embedding": emb,
-                  "meta": {"fqn": fqn, "name": info.get("name", ""), "doc": doc}}],
-            )
-
-        # KPIs
-        for kpi in ont.get("kpis", []):
-            doc = (
-                f"KPI: {kpi['name']}\n"
-                f"Expression: {kpi.get('expression', '')}\n"
-                f"Description: {kpi.get('description', '')}\n"
-                f"Tables: {', '.join(kpi.get('tables', []))}"
-            )
-            emb = self.emb.embed([doc])[0]
-            self._upsert(
-                "kpis",
-                [{"id": self._id(kpi["name"]), "embedding": emb,
-                  "meta": {"kpi_name": kpi["name"], "doc": doc}}],
-            )
-
-        # Concepts (with causal edges embedded in the doc)
-        cm = ont.get("causal_map", [])
-        for c in ont.get("business_concepts", []):
-            cname = c["concept"]
-            causes = [e["source"] for e in cm if e["target"] == cname]
-            effects = [e["target"] for e in cm if e["source"] == cname]
-            causal = ""
-            if causes:
-                causal += f"\nCaused by: {', '.join(causes)}"
-            if effects:
-                causal += f"\nAffects: {', '.join(effects)}"
-            doc = (
-                f"Concept: {cname}\n"
-                f"Description: {c.get('description', '')}\n"
-                f"Synonyms: {', '.join(c.get('synonyms', []))}\n"
-                f"Calculation: {c.get('calculation_hint', '')}"
-                f"{causal}"
-            )
-            emb = self.emb.embed([doc])[0]
-            self._upsert(
-                "concepts",
-                [{"id": self._id(cname), "embedding": emb,
-                  "meta": {"concept": cname, "doc": doc}}],
-            )
-
-        # Examples
-        for ex in ont.get("example_queries", []):
-            doc = (
-                f"Q: {ex['question']}\n"
-                f"SQL: {ex['sql']}\n"
-                f"Complexity: {ex.get('complexity', 'simple')}"
-            )
-            emb = self.emb.embed([doc])[0]
-            self._upsert(
-                "examples",
-                [{"id": self._id(ex["question"]), "embedding": emb,
-                  "meta": {
-                      "nl_query": ex["question"],
-                      "sql": ex["sql"],
-                      "doc": doc,
-                      "complexity": ex.get("complexity", "simple"),
-                  }}],
-            )
-
-        log.info(
-            f"Indexed: {len(ont.get('tables', {}))} tables, "
-            f"{len(ont.get('kpis', []))} KPIs, "
-            f"{len(ont.get('business_concepts', []))} concepts, "
-            f"{len(ont.get('example_queries', []))} examples"
-        )
+    def index_from_graph(self, kg=None):
+        """Alias for create_indexes() for backward compatibility."""
+        self.create_indexes()
 
     def index_example(self, q, sql, tables):
+        """Add a new example with embedding."""
+        if not self.emb.model:
+            log.warning("No embedding model, cannot index example")
+            return
         doc = f"Q: {q}\nSQL: {sql}"
         emb = self.emb.embed([doc])[0]
-        self._upsert(
-            "examples",
-            [{"id": self._id(q), "embedding": emb,
-              "meta": {"nl_query": q, "sql": sql, "doc": doc}}],
+        self._run_query(
+            """
+            MERGE (e:QueryExample {question: $question})
+            SET e.sql = $sql, e.embedding = $embedding, e.type = 'sql'
+            """,
+            {"question": q, "sql": sql, "embedding": emb}
         )
 
-    # ── Search methods ──
+    # ─────────────────────────────────────────────────────────────────────────
+    # Public Search Methods (same interface as before)
+    # ─────────────────────────────────────────────────────────────────────────
 
     def search_tables(self, q, k=5):
         return [
@@ -352,19 +425,19 @@ class VectorSearch:
                 "doc": r.get("doc", ""),
                 "score": r.get("distance", 1),
             }
-            for r in self._search(self._dep["tables"], q, k)
+            for r in self._search("table", q, k)
         ]
 
     def search_kpis(self, q, k=5):
         return [
             {"kpi_name": r.get("kpi_name", ""), "doc": r.get("doc", "")}
-            for r in self._search(self._dep["kpis"], q, k)
+            for r in self._search("kpi", q, k)
         ]
 
     def search_concepts(self, q, k=5):
         return [
             {"concept": r.get("concept", ""), "doc": r.get("doc", "")}
-            for r in self._search(self._dep["concepts"], q, k)
+            for r in self._search("concept", q, k)
         ]
 
     def search_examples(self, q, k=5):
@@ -375,5 +448,5 @@ class VectorSearch:
                 "doc": r.get("doc", ""),
                 "complexity": r.get("complexity", "simple"),
             }
-            for r in self._search(self._dep["examples"], q, k)
+            for r in self._search("example", q, k)
         ]

@@ -1,5 +1,5 @@
 """
-Neo4j Knowledge Graph — 10 Domain Layers (All Fixes Applied)
+Neo4j Knowledge Graph — 10 Domain Layers + Location Entities
 =============================================================
 Changes from previous version:
   - upsert_redemption_rule: CREATE → MERGE (idempotent)
@@ -8,6 +8,7 @@ Changes from previous version:
   - all_tables / all_concepts / get_all_kpis: added error handling
   - Added dotenv loading for environment variables
   - get_causal_chain: auto-resolves KPI names to concept names
+  - NEW: LocationEntity nodes + get_location_hints() for entity resolution
 """
 
 import os, json, logging
@@ -51,6 +52,7 @@ class KnowledgeGraph:
             "CREATE CONSTRAINT IF NOT EXISTS FOR (n:Supplier) REQUIRE n.name IS UNIQUE",
             "CREATE CONSTRAINT IF NOT EXISTS FOR (n:LoyaltyTier) REQUIRE n.name IS UNIQUE",
             "CREATE CONSTRAINT IF NOT EXISTS FOR (n:Dimension) REQUIRE n.name IS UNIQUE",
+            "CREATE CONSTRAINT IF NOT EXISTS FOR (n:LocationEntity) REQUIRE n.name IS UNIQUE",  # NEW
         ]
         with self.driver.session() as s:
             for c in constraints:
@@ -147,6 +149,56 @@ class KnowledgeGraph:
                 "MERGE (r)-[:HAS_TERRITORY]->(t)",
                 r=region, n=name,
             )
+
+    # ═══ Layer 2b: Location Entities (NEW) ═══
+
+    def upsert_location_entity(self, name, loc_type, table, column):
+        """Create a LocationEntity node for entity resolution in queries.
+        
+        Args:
+            name: Location name (e.g., "Canary Wharf")
+            loc_type: Entity type (e.g., "cluster", "region")
+            table: BigQuery table name (e.g., "network_clusters")
+            column: Column to filter on (e.g., "cluster_name")
+        """
+        with self.driver.session() as s:
+            s.run(
+                "MERGE (l:LocationEntity {name: $name}) "
+                "SET l.type = $type, l.table = $table, l.column = $column, "
+                "    l.name_lower = toLower($name)",
+                name=name, type=loc_type, table=table, column=column,
+            )
+
+    def get_location_hints(self, question: str) -> list:
+        """Find location entities mentioned in the question.
+        
+        Returns list of hints for SQL generation, e.g.:
+          ["'Canary Wharf' is a cluster — filter using: network_clusters.cluster_name = 'Canary Wharf'"]
+        """
+        q_lower = question.lower()
+        
+        with self.driver.session() as s:
+            # Find all location entities where name appears in the question
+            result = s.run(
+                """
+                MATCH (l:LocationEntity)
+                WHERE $question CONTAINS l.name_lower
+                RETURN l.name AS name, l.type AS type, l.table AS table, l.column AS column
+                """,
+                question=q_lower
+            )
+            
+            hints = []
+            for record in result:
+                name = record["name"]
+                loc_type = record["type"]
+                table = record["table"]
+                column = record["column"]
+                hints.append(
+                    f"'{name}' is a {loc_type} — filter using: {table}.{column} = '{name}'"
+                )
+            
+            return hints
 
     # ═══ Layer 3: KPI Definitions ═══
 
@@ -326,8 +378,6 @@ class KnowledgeGraph:
             
             # 3. Try KPI lookup - prefer concept with similar name
             if not resolved_name and key_terms:
-                # Build a scoring query to find the best matching concept
-                # Prefer concepts that share key terms with the KPI name
                 result = s.run(
                     """
                     MATCH (c:BusinessConcept)-[:MEASURES]->(k:KPI)
@@ -374,7 +424,7 @@ class KnowledgeGraph:
                 if record:
                     resolved_name = record["name"]
             
-            # Use resolved name or fall back to original (will return 0 results)
+            # Use resolved name or fall back to original
             target_name = resolved_name or concept_name
             
             # Now get the causal chain
@@ -502,7 +552,6 @@ class KnowledgeGraph:
 
     def upsert_account_manager(self, name, segment, left_date=None, accounts=0):
         with self.driver.session() as s:
-            # Build SET clause dynamically to handle optional left_date
             set_clause = "SET am.segment=$seg, am.accounts=$acc"
             params = {"n": name, "seg": segment, "acc": accounts}
             if left_date:
@@ -607,7 +656,6 @@ class KnowledgeGraph:
 
     def upsert_redemption_rule(self, tier, points_per_gbp, effective_date,
                                 previous_ratio=None):
-        """FIX: Changed from CREATE to MERGE to prevent duplicates."""
         with self.driver.session() as s:
             s.run(
                 "MATCH (lt:LoyaltyTier {name:$t}) "
@@ -645,9 +693,6 @@ class KnowledgeGraph:
 
     def upsert_triggers(self, domain_label, domain_key, domain_value,
                         concept_name, evidence=""):
-        """Connect a domain event node to the business concept it triggers.
-        Example: SupplyIncident(factory_fire) --TRIGGERS--> supply chain disruption
-        """
         with self.driver.session() as s:
             s.run(
                 f"MATCH (d:{domain_label} {{{domain_key}:$dv}}),"
@@ -657,10 +702,6 @@ class KnowledgeGraph:
             )
 
     def get_triggering_events(self, concept_name):
-        """Find all domain events that TRIGGER a business concept.
-        Traverses TRIGGERS edges from any node type into the concept.
-        Returns a list of triggering events with their type and details.
-        """
         events = []
         with self.driver.session() as s:
             for r in s.run(
@@ -677,15 +718,8 @@ class KnowledgeGraph:
         return {"concept": concept_name, "triggering_events": events}
 
     def get_full_causal_path(self, target_concept, depth=3):
-        """Full causal trace: triggering events → concepts → AFFECTS → target.
-        Returns the complete path from domain events through causal chain
-        to the target concept.
-        """
         chain = self.get_causal_chain(target_concept, depth)
-        result = {
-            "target": target_concept,
-            "caused_by": [],
-        }
+        result = {"target": target_concept, "caused_by": []}
         for cause in chain.get("caused_by", []):
             cname = cause["concept"]
             triggers = self.get_triggering_events(cname)
@@ -757,325 +791,103 @@ class KnowledgeGraph:
         return paths
 
     def get_domain_context_for_question(self, question):
-        """Pull domain context from all 10 Neo4j layers.
-
-        FIX: Added L7 customer relationships (account managers, contracts,
-        churn risk) triggered by churn/enterprise/segment keywords.
-        Added L9 segment rules. Expanded keyword triggers throughout.
-        """
         q_lower = question.lower()
         context = {
-            "events": [],
-            "business_rules": [],
-            "org_context": [],
-            "customer_relationships": [],
-            "supply_chain": [],
-            "loyalty": [],
-            "pricing": [],
-            "product_taxonomy": [],
-            "promotion_targeting": [],
+            "events": [], "business_rules": [], "org_context": [],
+            "customer_relationships": [], "supply_chain": [], "loyalty": [],
+            "pricing": [], "product_taxonomy": [], "promotion_targeting": [],
             "segment_rules": [],
         }
         with self.driver.session() as s:
-            # ── Always returned (L8 temporal, L6 supply, L9 discount/pricing) ──
-
-            # Competitor actions
             for r in s.run("MATCH (ca:CompetitorAction) RETURN ca"):
                 n = r["ca"]
                 context["events"].append({
-                    "type": "competitor_action",
-                    "competitor": n.get("competitor", ""),
-                    "action": n.get("type", ""),
-                    "date": n.get("date", ""),
+                    "type": "competitor_action", "competitor": n.get("competitor", ""),
+                    "action": n.get("type", ""), "date": n.get("date", ""),
                     "impact": n.get("impact", ""),
                 })
-            # Market conditions
             for r in s.run("MATCH (mc:MarketCondition) RETURN mc"):
                 n = r["mc"]
                 context["events"].append({
-                    "type": "market_condition",
-                    "condition": n.get("type", ""),
-                    "trend": n.get("trend", ""),
-                    "severity": n.get("severity", ""),
+                    "type": "market_condition", "condition": n.get("type", ""),
+                    "trend": n.get("trend", ""), "severity": n.get("severity", ""),
                 })
-            # Policy changes
             for r in s.run("MATCH (pc:PolicyChange) RETURN pc"):
                 n = r["pc"]
                 context["events"].append({
-                    "type": "policy_change",
-                    "policy": n.get("type", ""),
+                    "type": "policy_change", "policy": n.get("type", ""),
                     "description": n.get("description", ""),
-                    "effective": n.get("effective_date", ""),
-                })
-            # Supply incidents
-            for r in s.run(
-                "MATCH (sp:Supplier)-[:HAS_INCIDENT]->(i:SupplyIncident) "
-                "RETURN sp.name AS supplier, i"
-            ):
-                n = r["i"]
-                context["supply_chain"].append({
-                    "supplier": r["supplier"],
-                    "type": n.get("type", ""),
-                    "date": n.get("date", ""),
+                    "effective_date": n.get("effective_date", ""),
                     "impact": n.get("impact", ""),
                 })
-            # Discount policies
             for r in s.run("MATCH (dp:DiscountPolicy) RETURN dp"):
                 n = r["dp"]
                 context["business_rules"].append({
-                    "type": "discount_policy",
-                    "category": n.get("category", ""),
-                    "max_pct": n.get("max_pct", 0),
-                    "store_type": n.get("store_type", ""),
+                    "type": "discount_policy", "category": n.get("category", ""),
+                    "max_pct": n.get("max_pct", 0), "store_type": n.get("store_type", ""),
                 })
-            # Pricing decisions
             for r in s.run("MATCH (pd:PricingDecision) RETURN pd"):
                 n = r["pd"]
                 context["pricing"].append({
-                    "subcategory": n.get("subcategory", ""),
-                    "action": n.get("action", ""),
-                    "reason": n.get("reason", ""),
-                    "date": n.get("date", ""),
+                    "subcategory": n.get("subcategory", ""), "action": n.get("action", ""),
+                    "reason": n.get("reason", ""), "date": n.get("date", ""),
                 })
-
-            # ── L2: Org hierarchy (store managers) ──
-            if any(w in q_lower for w in [
-                "store", "manchester", "birmingham", "brighton", "london",
-                "manager", "flagship", "standard", "region", "outlet",
-                "edinburgh", "cardiff", "liverpool", "glasgow",
-            ]):
-                for r in s.run(
-                    "MATCH (st:Store)-[:MANAGED_BY]->(m:Manager) "
-                    "RETURN st.name AS store, st.store_id AS sid, m"
-                ):
-                    m = r["m"]
-                    context["org_context"].append({
-                        "store": r["store"],
-                        "store_id": r["sid"],
-                        "manager": m.get("name", ""),
-                        "since": m.get("since", ""),
-                        "experience": m.get("experience_years", 0),
-                    })
-
-            # ── L7: Customer relationships (FIX: was completely missing) ──
-            if any(w in q_lower for w in [
-                "churn", "churning", "attrition", "retention", "enterprise",
-                "segment", "smb", "mid-market", "account manager",
-                "contract", "renewal", "customer loss", "inactive",
-            ]):
-                # Account managers (separate from Store Managers)
-                for r in s.run("MATCH (am:AccountManager) RETURN am"):
-                    am = r["am"]
-                    entry = {
-                        "type": "account_manager",
-                        "name": am.get("name", ""),
-                        "segment": am.get("segment", ""),
-                        "accounts": am.get("accounts", 0),
-                    }
-                    if am.get("left_date"):
-                        entry["left_date"] = am["left_date"]
-                        entry["status"] = "departed"
-                    else:
-                        entry["status"] = "active"
-                    context["customer_relationships"].append(entry)
-
-                # Contracts at risk
-                for r in s.run("MATCH (c:Contract) RETURN c"):
-                    c = r["c"]
-                    context["customer_relationships"].append({
-                        "type": "contract",
-                        "segment": c.get("segment", ""),
-                        "contract_type": c.get("type", ""),
-                        "tier": c.get("tier", ""),
-                        "renewal_date": c.get("renewal_date", ""),
-                    })
-
-                # Churn risk assessments
-                for r in s.run("MATCH (cr:ChurnRisk) RETURN cr"):
-                    cr = r["cr"]
-                    context["customer_relationships"].append({
-                        "type": "churn_risk",
-                        "segment": cr.get("segment", ""),
-                        "score": cr.get("score", 0),
-                        "reason": cr.get("reason", ""),
-                    })
-
-            # ── L9: Segment rules (FIX: was completely missing) ──
-            if any(w in q_lower for w in [
-                "segment", "enterprise", "smb", "mid-market", "churn",
-                "customer", "cohort",
-            ]):
-                for r in s.run("MATCH (sr:SegmentRule) RETURN sr"):
-                    sr = r["sr"]
-                    context["segment_rules"].append({
-                        "segment": sr.get("segment", ""),
-                        "field": sr.get("field", ""),
-                        "condition": sr.get("condition", ""),
-                        "description": sr.get("description", ""),
-                    })
-
-            # ── L10: Loyalty ──
-            if any(w in q_lower for w in [
-                "loyalty", "redemption", "points", "tier", "platinum",
-                "gold", "silver", "bronze", "reward",
-            ]):
-                for r in s.run(
-                    "MATCH (lt:LoyaltyTier)-[:QUALIFIES_FOR]->(rr:RedemptionRule) "
-                    "RETURN lt.name AS tier, rr"
-                ):
-                    rr = r["rr"]
-                    context["loyalty"].append({
-                        "tier": r["tier"],
-                        "points_per_gbp": rr.get("points_per_gbp", 0),
-                        "effective": rr.get("effective_date", ""),
-                        "previous": rr.get("previous_ratio"),
-                    })
-                for r in s.run("MATCH (p:Partner) RETURN p"):
-                    context["loyalty"].append({
-                        "type": "partner",
-                        "name": r["p"].get("name", ""),
-                        "integration_date": r["p"].get("integration_date", ""),
-                    })
-                for r in s.run("MATCH (c:LoyaltyCampaign) RETURN c"):
-                    context["loyalty"].append({
-                        "type": "campaign",
-                        "name": r["c"].get("name", ""),
-                        "sent_date": r["c"].get("sent_date", ""),
-                        "description": r["c"].get("description", ""),
-                    })
-
-            # ── L5: Product taxonomy ──
-            if any(w in q_lower for w in [
-                "product", "category", "accessories", "electronics",
-                "software", "brand", "margin", "hardware", "services",
-                "stockout", "discontinued",
-            ]):
-                for r in s.run(
-                    "MATCH (c:Category)-[:HAS_BRAND]->(b:Brand) "
-                    "RETURN c.name AS category, b.name AS brand, "
-                    "b.price_tier AS tier"
-                ):
-                    context["product_taxonomy"].append({
-                        "category": r["category"],
-                        "brand": r["brand"],
-                        "price_tier": r["tier"],
-                    })
-                for r in s.run(
-                    "MATCH (a:Category)-[:COMPETES_WITH]->(b:Category) "
-                    "RETURN a.name AS cat1, b.name AS cat2"
-                ):
-                    context["product_taxonomy"].append({
-                        "competes": f"{r['cat1']} vs {r['cat2']}",
-                    })
-
-            # ── Promotion targeting ──
-            if any(w in q_lower for w in [
-                "promo", "promotion", "black friday", "discount",
-                "campaign", "clearance", "accessories", "despite",
-            ]):
-                seen = set()
-                for r in s.run(
-                    "MATCH (p:Promotion)-[:TARGETS_CATEGORY]->(c:Category) "
-                    "RETURN p.name AS promo, c.name AS category"
-                ):
-                    key = f"{r['promo']}→{r['category']}"
-                    if key not in seen:
-                        seen.add(key)
-                        context["promotion_targeting"].append({
-                            "promo": r["promo"],
-                            "category": r["category"],
-                        })
-                for r in s.run(
-                    "MATCH (p:Promotion)-[t:TARGETS_PRODUCT]->() "
-                    "RETURN p.name AS promo, t.product_id AS product_id"
-                ):
-                    context["promotion_targeting"].append({
-                        "promo": r["promo"],
-                        "product_id": r["product_id"],
-                        "scope": "product",
-                    })
-        return context
+        return {k: v for k, v in context.items() if v}
 
     def get_full_ontology_text(self):
-        ont = {
-            "tables": {},
-            "relationships": [],
-            "kpis": [],
-            "business_concepts": [],
-            "causal_map": [],
-            "example_queries": [],
-        }
+        ont = {"tables": {}, "kpis": [], "concepts": [], "causal_edges": []}
         with self.driver.session() as s:
-            for r in s.run(
-                "MATCH (t:Table) OPTIONAL MATCH (t)-[:HAS_COLUMN]->(c) "
-                "RETURN t, collect(DISTINCT c) AS cols"
-            ):
-                t = r["t"]
-                ont["tables"][t["fqn"]] = {
-                    "name": t.get("name"),
-                    "description": t.get("description"),
-                    "columns": [
-                        {"name": c["name"], "type": c.get("data_type", "")}
-                        for c in r["cols"]
-                        if c["name"]
-                    ],
-                }
-            for r in s.run(
-                "MATCH (a)-[rel:RELATES_TO]->(b) "
-                "RETURN a.fqn AS a, b.fqn AS b, rel.join_condition AS jc"
-            ):
-                ont["relationships"].append({
-                    "table1": r["a"],
-                    "table2": r["b"],
-                    "join_condition": r["jc"],
-                })
-            for r in s.run(
-                "MATCH (k:KPI) OPTIONAL MATCH (k)-[:COMPUTED_FROM]->(t:Table) "
-                "RETURN k, collect(DISTINCT t.fqn) AS tables"
-            ):
-                k = r["k"]
-                ont["kpis"].append({
-                    "name": k["name"],
-                    "expression": k.get("expression", ""),
-                    "description": k.get("description", ""),
-                    "tables": r["tables"],
-                })
-            for r in s.run("MATCH (b:BusinessConcept) RETURN b"):
-                b = r["b"]
-                ont["business_concepts"].append({
-                    "concept": b["name"],
-                    "description": b.get("description", ""),
-                    "synonyms": list(b.get("synonyms") or []),
-                    "calculation_hint": b.get("calculation_hint", ""),
-                })
-            for r in s.run(
-                "MATCH (a:BusinessConcept)-[r:AFFECTS]->(b:BusinessConcept) "
-                "RETURN a.name AS s, b.name AS t, r.mechanism AS m"
-            ):
-                ont["causal_map"].append({
-                    "source": r["s"],
-                    "target": r["t"],
-                    "mechanism": r["m"] or "",
-                })
-            for r in s.run("MATCH (e:QueryExample) RETURN e"):
-                e = r["e"]
-                ont["example_queries"].append({
-                    "question": e["question"],
-                    "sql": e["sql"],
-                    "complexity": e.get("complexity", "simple"),
-                })
-        return json.dumps(ont, indent=1, default=str)
+            try:
+                for r in s.run(
+                    "MATCH (t:Table) OPTIONAL MATCH (t)-[:HAS_COLUMN]->(c:Column) "
+                    "RETURN t.fqn AS fqn, t.name AS name, t.description AS desc, "
+                    "collect({name:c.name, type:c.data_type, desc:c.description}) AS cols"
+                ):
+                    ont["tables"][r["fqn"]] = {
+                        "name": r["name"], "description": r["desc"],
+                        "columns": [c for c in r["cols"] if c["name"]],
+                    }
+            except Exception as e:
+                log.warning(f"Error loading tables: {e}")
+            try:
+                for r in s.run(
+                    "MATCH (k:KPI) RETURN k.name AS name, k.expression AS expr, k.description AS desc"
+                ):
+                    ont["kpis"].append({
+                        "name": r["name"], "expression": r["expr"] or "",
+                        "description": r["desc"] or "",
+                    })
+            except Exception as e:
+                log.warning(f"Error loading KPIs: {e}")
+            try:
+                for r in s.run("MATCH (b:BusinessConcept) RETURN b"):
+                    b = r["b"]
+                    ont["concepts"].append({
+                        "name": b.get("name", ""), "description": b.get("description", ""),
+                        "synonyms": list(b.get("synonyms") or []),
+                    })
+            except Exception as e:
+                log.warning(f"Error loading concepts: {e}")
+            try:
+                for r in s.run(
+                    "MATCH (a:BusinessConcept)-[r:AFFECTS]->(b:BusinessConcept) "
+                    "RETURN a.name AS src, b.name AS tgt, r.mechanism AS mech"
+                ):
+                    ont["causal_edges"].append({
+                        "source": r["src"], "target": r["tgt"],
+                        "mechanism": r["mech"] or "",
+                    })
+            except Exception as e:
+                log.warning(f"Error loading causal edges: {e}")
+        return json.dumps(ont, indent=2)
 
     def all_tables(self):
-        with self.driver.session() as s:
-            return [r["f"] for r in s.run("MATCH (t:Table) RETURN t.fqn AS f")]
-
-    def all_concepts(self):
-        with self.driver.session() as s:
-            return [
-                {"concept": r["b"]["name"], "description": r["b"].get("description", "")}
-                for r in s.run("MATCH (b:BusinessConcept) RETURN b")
-            ]
+        try:
+            with self.driver.session() as s:
+                return [r["fqn"] for r in s.run("MATCH (t:Table) RETURN t.fqn AS fqn")]
+        except Exception as e:
+            log.warning(f"Error fetching all_tables: {e}")
+            return []
 
     def get_all_kpis(self):
         with self.driver.session() as s:
@@ -1083,53 +895,38 @@ class KnowledgeGraph:
         return [self.get_kpi(n) for n in names if self.get_kpi(n)]
 
     def get_all_concepts(self):
-        """Get all concepts with full metadata for vector search indexing."""
         with self.driver.session() as s:
             concepts = []
             for r in s.run("MATCH (b:BusinessConcept) RETURN b"):
                 b = r["b"]
                 concepts.append({
-                    "name": b.get("name", ""),
-                    "description": b.get("description", ""),
+                    "name": b.get("name", ""), "description": b.get("description", ""),
                     "synonyms": list(b.get("synonyms") or []),
                     "calculation_hint": b.get("calculation_hint", ""),
                 })
             return concepts
 
     def get_similar_examples(self, question: str, limit: int = 3):
-        """Get similar query examples for few-shot prompting.
-        Returns examples stored in Neo4j as QueryExample nodes.
-        """
         with self.driver.session() as s:
-            # Simple keyword matching for now (could be enhanced with embeddings)
             examples = []
-            keywords = question.lower().split()[:5]  # First 5 words
-            
+            keywords = question.lower().split()[:5]
             for r in s.run(
-                """
-                MATCH (e:QueryExample)
-                WHERE ANY(word IN $keywords WHERE toLower(e.question) CONTAINS word)
-                RETURN e.question AS question, e.sql AS sql, e.category AS category
-                LIMIT $limit
-                """,
+                "MATCH (e:QueryExample) "
+                "WHERE ANY(word IN $keywords WHERE toLower(e.question) CONTAINS word) "
+                "RETURN e.question AS question, e.sql AS sql, e.category AS category "
+                "LIMIT $limit",
                 keywords=keywords, limit=limit
             ):
                 examples.append({
-                    "question": r["question"],
-                    "sql": r["sql"],
-                    "category": r["category"],
+                    "question": r["question"], "sql": r["sql"], "category": r["category"],
                 })
-            
-            # If no keyword matches, return any examples
             if not examples:
                 for r in s.run(
-                    "MATCH (e:QueryExample) RETURN e.question AS question, e.sql AS sql, e.category AS category LIMIT $limit",
+                    "MATCH (e:QueryExample) RETURN e.question AS question, e.sql AS sql, "
+                    "e.category AS category LIMIT $limit",
                     limit=limit
                 ):
                     examples.append({
-                        "question": r["question"],
-                        "sql": r["sql"],
-                        "category": r["category"],
+                        "question": r["question"], "sql": r["sql"], "category": r["category"],
                     })
-            
             return examples

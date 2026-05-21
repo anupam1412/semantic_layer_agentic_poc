@@ -78,6 +78,7 @@ class ConfigurableSemanticLayerSetup:
             "concepts": 0, "affects_edges": 0,
             "examples": 0,
             "regions": 0, "stores": 0, "territories": 0,
+            "location_entities": 0,
             "suppliers": 0, "supply_incidents": 0,
             "account_managers": 0, "contracts": 0, "churn_risks": 0,
             "competitor_actions": 0, "market_conditions": 0, "policy_changes": 0,
@@ -369,6 +370,45 @@ class ConfigurableSemanticLayerSetup:
         
         log.info(f"  Layer 2 complete: {self.stats['regions']} regions, "
                 f"{self.stats['stores']} stores, {self.stats['territories']} territories")
+    
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # LAYER 2B: LOCATION ENTITIES
+    # ═══════════════════════════════════════════════════════════════════════
+    
+    def setup_layer2b_location_entities(self):
+        """Create LocationEntity nodes for entity resolution in queries.
+        
+        Reads location_entities from ontology.yaml and creates nodes in Neo4j
+        that help the agent resolve location names to the correct table/column.
+        """
+        log.info("  Layer 2b: Location entities...")
+        
+        location_entities = self.ontology.get("location_entities", [])
+        if not location_entities:
+            log.info("    No location_entities in ontology, skipping")
+            return
+        
+        for loc in location_entities:
+            name = loc.get("name", "")
+            loc_type = loc.get("type", "unknown")
+            table = loc.get("table", "")
+            column = loc.get("column", "")
+            
+            if not name:
+                log.warning(f"    Skipping location entity with no name: {loc}")
+                continue
+            
+            if not self.dry_run:
+                self.kg.upsert_location_entity(
+                    name=name,
+                    loc_type=loc_type,
+                    table=table,
+                    column=column,
+                )
+            self.stats["location_entities"] += 1
+        
+        log.info(f"    Created {self.stats['location_entities']} location entities")
     
     # ═══════════════════════════════════════════════════════════════════════
     # LAYER 3: KPIs + DRIVER TREES
@@ -918,6 +958,7 @@ class ConfigurableSemanticLayerSetup:
         
         self.setup_layer1_schema()
         self.setup_layer2_org_hierarchy()
+        self.setup_layer2b_location_entities()
         self.setup_layer3_kpis()
         self.setup_layer4_causal()
         self.setup_layer5_taxonomy()

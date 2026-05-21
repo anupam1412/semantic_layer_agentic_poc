@@ -262,7 +262,11 @@ def get_schema_context(
     
     kg = _get_kg()
     vs = _get_vs()
-
+    # Resolve location entities from Neo4j
+    location_hints = kg.get_location_hints(question)
+    if location_hints:
+        print(f"[SCHEMA]   → Location hints: {location_hints}")
+        
     # Search for relevant tables
     focused = vs.search_tables(question, k=5)
 # Handle target_tables as either list or comma-separated string
@@ -306,6 +310,7 @@ def get_schema_context(
         "joins": joins,
         "kpi": kpi_ctx,
         "causal": causal,
+        "location_hints":location_hints,
     })
 
 
@@ -439,8 +444,19 @@ planner_agent = Agent(
     model=MODEL,
     description="Creates sub-questions for investigation.",
     instruction=(
-        "Create 2-4 sub-questions based on triage. For ROOT_CAUSE questions, use causal tools.\n\n"
-        "Output JSON array: [{question, target_tables, target_kpi, causal_concept}, ...]\n"
+        "Create 2-5 sub-questions based on triage.\n\n"
+        "For diagnostic questions about KPI degradation:\n"
+        "  1. FIRST create a TREND sub-question with daily granularity\n"
+        "  2. This pinpoints WHEN the issue occurred\n"
+        "  3. THEN investigate causes for that specific window\n"
+        "═══ WHEN TO USE CAUSAL TOOLS ═══\n"
+        "If triage shows diagnostic=True OR question contains 'why', 'cause', 'reason', "
+        "'spike', 'drop', 'decline', 'increase':\n"
+        "  1. FIRST call get_causal_chain(concept_name) for the target KPI/concept\n"
+        "  2. Create sub-questions for each cause in the chain\n"
+        "  3. Or call get_full_causal_path for causes + triggering events together\n\n"
+        "═══ OUTPUT FORMAT ═══\n"
+        "JSON array: [{question, target_tables, target_kpi, causal_concept}, ...]\n"
         "Use ONLY names from triage report. Be concise."
     ),
     tools=[get_kpi_driver_tree, get_causal_chain, get_full_causal_path],
